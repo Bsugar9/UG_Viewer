@@ -259,7 +259,7 @@ fun PdfPreviewContent(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp)
         ) {
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             pages.forEachIndexed { index, bitmap ->
                 Card(
@@ -292,14 +292,14 @@ fun PdfPreviewContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             val context = LocalContext.current
             Button(
                 onClick = { viewModel.savePdf(context) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Highlight),
                 shape = RoundedCornerShape(12.dp)
             ) {

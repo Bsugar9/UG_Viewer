@@ -1,8 +1,10 @@
 package com.ugviewer.api
 
 import com.google.gson.Gson
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -22,6 +24,8 @@ class UGApiClient {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .addInterceptor(RetryInterceptor(3))
         .build()
 
     private val gson = Gson()
@@ -53,7 +57,6 @@ class UGApiClient {
             .header("Accept-Charset", "utf-8")
             .header("Accept", "application/json")
             .header("User-Agent", USER_AGENT)
-            .header("Connection", "close")
             .header("X-UG-CLIENT-ID", deviceId)
             .header("X-UG-API-KEY", generateApiKey())
     }
@@ -66,6 +69,7 @@ class UGApiClient {
         val artistPath = "/tab/search?artist_name=${encodedQuery}&$typeParams&page=$page"
 
         val titleResults = executeSearch(titlePath)
+        Thread.sleep(300)
         val artistResults = executeSearch(artistPath)
 
         val seen = mutableSetOf<Long>()
@@ -130,5 +134,23 @@ class UGApiClient {
             ?: throw Exception("No tab ID found in URL response")
 
         return getTabById(tabId)
+    }
+}
+
+private class RetryInterceptor(private val maxRetries: Int) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+        var lastException: IOException? = null
+        repeat(maxRetries) { attempt ->
+            try {
+                return chain.proceed(chain.request())
+            } catch (e: IOException) {
+                lastException = e
+                android.util.Log.w("UGApiClient", "Request failed (attempt ${attempt + 1}/$maxRetries): ${e.message}")
+                if (attempt < maxRetries - 1) {
+                    Thread.sleep(1000L * (attempt + 1))
+                }
+            }
+        }
+        throw lastException ?: IOException("All retries failed")
     }
 }
