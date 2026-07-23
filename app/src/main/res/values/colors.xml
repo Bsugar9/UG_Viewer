@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="ug_dark_bg">#FF1A1A2E</color>
+    <color name="ug_surface">#FF16213E</color>
+    <color name="ug_accent">#FF0F3460</color>
+    <color name="ug_highlight">#FFE94560</color>
+    <color name="ug_text">#FFE0E0E0</color>
+</resources>
