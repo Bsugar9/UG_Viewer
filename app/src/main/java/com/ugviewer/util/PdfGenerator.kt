@@ -50,6 +50,47 @@ object PdfGenerator {
     private val chPairRegex = Regex("""\[ch\](.*?)\[/ch\]""", RegexOption.IGNORE_CASE)
     private val anyTagRegex = Regex("""\[/?(?:ch|tab)\]""", RegexOption.IGNORE_CASE)
 
+    // Chord-name recognition for plain (untagged) lines.
+    private val chordQualityStartChars = "madsbM(#0123456789"
+    private val chordQualityChars = "majnidusbgM()#0123456789"
+    private val chordWordBlocklist = setOf(
+        "as", "ed", "add", "bad", "cad", "dad", "sad", "fab", "cab", "dab",
+        "baa", "bass", "dabs", "dada", "abba", "cabs", "fabs", "babs", "gabs", "ads", "adds"
+    )
+
+    /** True if the token looks like a chord name, e.g. C, Am7, F#m7, Cadd9, G/B, Dsus4. */
+    private fun isChordName(token: String): Boolean {
+        if (token.isEmpty() || token.length > 12) return false
+        if (token[0] !in 'A'..'G') return false
+        if (token.lowercase() in chordWordBlocklist) return false
+        var i = 1
+        if (i < token.length && (token[i] == '#' || token[i] == 'b')) i++
+        val quality = token.substring(i)
+        val slash = quality.indexOf('/')
+        val main = if (slash >= 0) quality.substring(0, slash) else quality
+        val tail = if (slash >= 0) quality.substring(slash + 1) else null
+        if (tail != null && (tail.isEmpty() || tail[0] !in 'A'..'G')) return false
+        if (main.isNotEmpty()) {
+            // Quality must start with a known chord-quality prefix; this keeps
+            // ordinary words (bed, gabs, ed...) from matching as chords.
+            val c0 = main[0]
+            val c1 = main.getOrElse(1) { ' ' }
+            val knownQuality = when {
+                c0.isDigit() || c0 == '(' -> true              // 7, 9, (add9)...
+                c0 == 'm' || c0 == 'M' -> true                 // m, m7, maj, M7...
+                c0 == 's' -> c1 == 'u'                         // sus2, sus4
+                c0 == 'd' -> c1 == 'i'                         // dim
+                c0 == 'a' -> c1 == 'd' || c1 == 'u'            // add9, aug
+                c0 == 'b' -> c1 == '5'                         // b5
+                else -> false
+            }
+            if (!knownQuality) return false
+            if (main.any { it !in chordQualityChars }) return false
+        }
+        if (tail != null && tail.any { it !in chordQualityChars && it !in 'A'..'G' }) return false
+        return true
+    }
+
     /** One wrapped chord+lyric segment: chord names with column offsets plus lyric text. */
     private class ChordSeg(val chords: List<Pair<Int, String>>, val lyric: String)
 
@@ -153,7 +194,43 @@ object PdfGenerator {
         fun addPlain(text: String) {
             val scrubbed = anyTagRegex.replace(text, "")
             if (scrubbed.isBlank()) return
-            for ((_, seg) in wrapKeepOffsets(scrubbed.trimEnd(), maxCols)) rows.add(PdfRow.Plain(seg))
+            val trimmed = scrubbed.trimEnd()
+            val tokens = chordTokenRegex.findAll(trimmed).toList()
+            val chordCount = tokens.count { isChordName(it.value) }
+            val lyricWords = tokens.size - chordCount
+            // Only treat the line as a chord line when chord names dominate it
+            // (e.g. "C  G  Am" or "Intro: C G Am"); lyrics with an occasional
+            // chord-like word stay plain text.
+            if (chordCount == 0 || lyricWords >= chordCount) {
+                for ((_, seg) in wrapKeepOffsets(trimmed, maxCols)) rows.add(PdfRow.Plain(seg))
+                return
+            }
+            val parts = wrapKeepOffsets(trimmed, maxCols)
+            val chordLists = List(parts.size) { mutableListOf<Pair<Int, String>>() }
+            for (m in tokens) {
+                if (!isChordName(m.value)) continue
+                val off = m.range.first
+                var idx = 0
+                for (i in parts.indices) if (off >= parts[i].first) idx = i
+                val rel = (off - parts[idx].first).coerceIn(0, (maxCols - m.value.length).coerceAtLeast(0))
+                chordLists[idx].add(rel to m.value)
+            }
+            val segments = if (lyricWords == 0) {
+                // Pure chord line: blank the words in the lyric row so the red
+                // chord names are the only thing drawn there.
+                val blanked = StringBuilder(trimmed)
+                for (m in tokens.asReversed()) {
+                    if (isChordName(m.value)) for (k in m.range) blanked.setCharAt(k, ' ')
+                }
+                val lyric = blanked.toString()
+                parts.mapIndexed { i, part ->
+                    val segText = lyric.substring(part.first, part.first + part.second.length)
+                    ChordSeg(chordLists[i].toList(), segText.trimEnd())
+                }
+            } else {
+                parts.mapIndexed { i, (_, t) -> ChordSeg(chordLists[i].toList(), t) }
+            }
+            rows.add(PdfRow.ChordLyric(segments))
         }
 
         fun addChordLyric(chords: List<Pair<Int, String>>, lyric: String) {

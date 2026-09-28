@@ -1,6 +1,8 @@
 package com.ugviewer.ui.viewer
 
 import android.graphics.Bitmap
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,6 +47,13 @@ fun TabViewerScreen(
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Keep the screen on (no dimming or timeout) while the tab/PDF is displayed.
+    val window = (context as? Activity)?.window
+    DisposableEffect(Unit) {
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
 
     LaunchedEffect(tabId) {
         viewModel.loadTab(tabId)
