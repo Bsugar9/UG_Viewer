@@ -3,6 +3,7 @@ package com.ugviewer.ui.viewer
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.*
@@ -50,7 +52,14 @@ fun TabViewerScreen(
 
     LaunchedEffect(viewModel.pdfSuccess) {
         viewModel.pdfSuccess?.let { msg ->
-            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
+            val result = snackbarHostState.showSnackbar(
+                message = msg,
+                actionLabel = if (viewModel.youtubeUrl != null) "Watch on YouTube" else null,
+                duration = SnackbarDuration.Long
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.openYouTube(context)
+            }
             viewModel.pdfSuccess = null
         }
     }
@@ -228,11 +237,65 @@ fun TabViewerScreen(
 }
 
 @Composable
+fun YouTubeListenBar(
+    youtubeUrl: String?,
+    isLoading: Boolean,
+    onOpen: () -> Unit
+) {
+    if (youtubeUrl == null && !isLoading) return
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        color = Surface,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (youtubeUrl != null) {
+                        Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onOpen)
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = ChordYellow,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            if (youtubeUrl != null) {
+                Text(
+                    text = "Listen on YouTube",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TabGreen
+                )
+            } else {
+                Text(
+                    text = "Finding song on YouTube...",
+                    fontSize = 13.sp,
+                    color = TextSecondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun PdfPreviewContent(
     pages: List<Bitmap>,
     padding: PaddingValues,
     viewModel: TabViewerViewModel
 ) {
+    val context = LocalContext.current
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
 
@@ -259,7 +322,15 @@ fun PdfPreviewContent(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp)
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            YouTubeListenBar(
+                youtubeUrl = viewModel.youtubeUrl,
+                isLoading = viewModel.isFetchingYouTube,
+                onOpen = { viewModel.openYouTube(context) }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             pages.forEachIndexed { index, bitmap ->
                 Card(
@@ -327,12 +398,20 @@ fun TextTabContent(
     onScaleChange: (Float) -> Unit,
     onOffsetChange: (androidx.compose.ui.geometry.Offset) -> Unit
 ) {
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
     ) {
         TabInfoHeader(tab = tab)
+
+        YouTubeListenBar(
+            youtubeUrl = viewModel.youtubeUrl,
+            isLoading = viewModel.isFetchingYouTube,
+            onOpen = { viewModel.openYouTube(context) }
+        )
 
         Box(
             modifier = Modifier

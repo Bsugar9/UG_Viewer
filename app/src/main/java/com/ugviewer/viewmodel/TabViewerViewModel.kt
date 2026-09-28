@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.ugviewer.api.TabResult
 import com.ugviewer.api.UGApiClient
 import com.ugviewer.util.PdfGenerator
+import com.ugviewer.util.YouTubeHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,6 +30,8 @@ class TabViewerViewModel : ViewModel() {
     var fontSize by mutableFloatStateOf(14f)
     var isGeneratingPdf by mutableStateOf(false)
     var pdfSuccess by mutableStateOf<String?>(null)
+    var isFetchingYouTube by mutableStateOf(false)
+    var youtubeUrl by mutableStateOf<String?>(null)
 
     var isChordType by mutableStateOf(false)
     var pdfPages by mutableStateOf<List<Bitmap>>(emptyList())
@@ -40,6 +43,7 @@ class TabViewerViewModel : ViewModel() {
         errorMessage = null
         pdfPages = emptyList()
         pdfBytes = null
+        youtubeUrl = null
 
         viewModelScope.launch {
             try {
@@ -51,6 +55,10 @@ class TabViewerViewModel : ViewModel() {
                 val hasChordMarkers = result.content.contains("[ch]", ignoreCase = true)
                 isChordType = type.contains("chord") || hasChordMarkers
 
+                // Fetch the matching YouTube video in the background so the
+                // viewer renders immediately and the link appears when ready.
+                fetchYouTubeLink(result)
+
                 if (isChordType) {
                     generatePdfPreview(result)
                 }
@@ -59,6 +67,30 @@ class TabViewerViewModel : ViewModel() {
             } finally {
                 isLoading = false
             }
+        }
+    }
+
+    private fun fetchYouTubeLink(tabResult: TabResult) {
+        if (tabResult.artistName.isBlank() || tabResult.songName.isBlank()) return
+        isFetchingYouTube = true
+        viewModelScope.launch {
+            try {
+                youtubeUrl = YouTubeHelper.findSongVideo(tabResult.artistName, tabResult.songName)
+            } finally {
+                isFetchingYouTube = false
+            }
+        }
+    }
+
+    /** Opens the matched YouTube video in the YouTube app (or browser). */
+    fun openYouTube(context: Context) {
+        val url = youtubeUrl ?: return
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            errorMessage = "Could not open YouTube: ${e.message}"
         }
     }
 
@@ -116,10 +148,21 @@ class TabViewerViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
+                // Make sure we have a YouTube link for the PDF; wait for the
+                // in-flight lookup or run one now if it hasn't finished/started.
+                val link = youtubeUrl ?: YouTubeHelper.findSongVideo(
+                    currentTab.artistName, currentTab.songName
+                )
+                if (youtubeUrl == null) youtubeUrl = link
+
                 val file = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdf(context, currentTab)
+                    PdfGenerator.generatePdf(context, currentTab, link)
                 }
-                pdfSuccess = "Saved to Downloads/UG Viewer/${file.name}"
+                pdfSuccess = if (link != null) {
+                    "Saved to Downloads/UG Viewer/${file.name} • YouTube link included"
+                } else {
+                    "Saved to Downloads/UG Viewer/${file.name}"
+                }
             } catch (e: Exception) {
                 errorMessage = "PDF save failed: ${e.message}"
             } finally {
