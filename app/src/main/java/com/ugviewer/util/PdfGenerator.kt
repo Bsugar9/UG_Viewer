@@ -26,12 +26,67 @@ object PdfGenerator {
     private const val MARGIN_BOTTOM = 50
 
     // Chords and lyrics share one monospace grid: a chord drawn at column N
-    // sits exactly above lyric column N, even after wrapping.
-    private const val CHORD_BASELINE = 10f
-    private const val LYRIC_BASELINE = 24f
-    private const val CHORD_ROW_HEIGHT = 29f
-    private const val PLAIN_ROW_HEIGHT = 13f
-    private const val GAP_HEIGHT = 8f
+    // sits exactly above lyric column N, even after wrapping. The chord band is
+    // deliberately tight so a chord hugs the lyric line it belongs to.
+    private const val CHORD_BASELINE = 8.5f
+    private const val LYRIC_BASELINE = 17f
+    private const val CHORD_ROW_HEIGHT = 22f
+    private const val PLAIN_ROW_HEIGHT = 12f
+    private const val GAP_HEIGHT = 6f
+    private const val BASE_FONT_SIZE = 10f
+
+    // Header/footer text is fixed and small: it exists only for context and must
+    // never scale with the body font, which would steal lines from the tab.
+    private const val HEADER_FONT_SIZE = 8f
+
+    val FONT_SIZE_OPTIONS = (29..42).map { it.toFloat() }
+    const val DEFAULT_FONT_SIZE = 32f
+    const val MIN_FONT_SIZE = 29f
+    const val MAX_FONT_SIZE = 42f
+
+    /**
+     * Every draw metric is derived from one body font size. Chords and lyrics
+     * always use the same point size, so their monospace advance widths match
+     * and a chord stays exactly above its lyric column at any size.
+     */
+    private data class PdfStyle(
+        val fontSize: Float,
+        val chordBaseline: Float,
+        val lyricBaseline: Float,
+        val chordRowHeight: Float,
+        val plainRowHeight: Float,
+        val gapHeight: Float,
+        val titleSize: Float,
+        val artistSize: Float,
+        val metaSize: Float,
+        val linkSize: Float,
+        val badgeTextSize: Float,
+        val footerSize: Float,
+        val badgeHeight: Float
+    ) {
+        companion object {
+            fun forFontSize(size: Float): PdfStyle {
+                val k = size / BASE_FONT_SIZE
+                return PdfStyle(
+                    fontSize = size,
+                    chordBaseline = CHORD_BASELINE * k,
+                    lyricBaseline = LYRIC_BASELINE * k,
+                    chordRowHeight = CHORD_ROW_HEIGHT * k,
+                    plainRowHeight = PLAIN_ROW_HEIGHT * k,
+                    gapHeight = GAP_HEIGHT * k,
+                    // Header/footer metrics are fixed (not scaled) so a large
+                    // body font cannot inflate the header and consume the page.
+                    titleSize = HEADER_FONT_SIZE,
+                    artistSize = HEADER_FONT_SIZE,
+                    metaSize = HEADER_FONT_SIZE,
+                    linkSize = HEADER_FONT_SIZE,
+                    badgeTextSize = HEADER_FONT_SIZE,
+                    footerSize = HEADER_FONT_SIZE,
+                    badgeHeight = 11f
+                )
+            }
+        }
+    }
 
     private data class PdfColors(
         val title: Int = Color.parseColor("#1A1A2E"),
@@ -92,69 +147,94 @@ object PdfGenerator {
     }
 
     /** One wrapped chord+lyric segment: chord names with column offsets plus lyric text. */
-    private class ChordSeg(val chords: List<Pair<Int, String>>, val lyric: String)
+    internal class ChordSeg(val chords: List<Pair<Int, String>>, val lyric: String)
 
-    private sealed class PdfRow {
+    internal sealed class PdfRow {
         class ChordLyric(val segments: List<ChordSeg>) : PdfRow()
         class Plain(val text: String) : PdfRow()
         class Gap(val height: Float = GAP_HEIGHT) : PdfRow()
     }
 
-    fun generatePdf(context: Context, tab: TabResult, youtubeUrl: String? = null): File {
-        val document = buildPdfDocument(tab, youtubeUrl)
+    fun generatePdf(
+        context: Context,
+        tab: TabResult,
+        youtubeUrl: String? = null,
+        fontSize: Float = DEFAULT_FONT_SIZE
+    ): File {
+        val document = buildPdfDocument(tab, youtubeUrl, fontSize)
         val fileName = sanitizeFileName("${tab.artistName} - ${tab.songName}.pdf")
         val file = saveToDownloads(context, document, fileName)
         document.close()
         return file
     }
 
-    fun generatePdfToBytes(tab: TabResult, youtubeUrl: String? = null): ByteArray {
-        val document = buildPdfDocument(tab, youtubeUrl)
+    fun generatePdfToBytes(
+        tab: TabResult,
+        youtubeUrl: String? = null,
+        fontSize: Float = DEFAULT_FONT_SIZE
+    ): ByteArray {
+        val document = buildPdfDocument(tab, youtubeUrl, fontSize)
         val outputStream = ByteArrayOutputStream()
         document.writeTo(outputStream)
         document.close()
         return outputStream.toByteArray()
     }
 
-    private fun buildPdfDocument(tab: TabResult, youtubeUrl: String?): PdfDocument {
+    private fun buildPdfDocument(
+        tab: TabResult,
+        youtubeUrl: String?,
+        fontSize: Float
+    ): PdfDocument {
         val document = PdfDocument()
+        val style = PdfStyle.forFontSize(fontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE))
 
         // Same monospace size for chords and lyrics so advance widths match.
         val lyricPaint = Paint().apply {
             color = colors.tabText
-            textSize = 10f
+            textSize = style.fontSize
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
             isAntiAlias = true
         }
         val chordPaint = Paint().apply {
             color = colors.chord
-            textSize = 10f
+            textSize = style.fontSize
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             isAntiAlias = true
         }
+        // Columns are measured from the actual paint, so a larger font simply
+        // yields fewer columns per line and the wrapper reflows the text
+        // instead of letting it run off the right edge of the page.
         val charWidth = lyricPaint.measureText("n")
-        val maxCols = maxOf(20, ((PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT) / charWidth).toInt())
+        val usableWidth = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
+        // Trust the measured advance width: at 42pt monospace a whole page is only
+        // ~22 columns, and a hard floor would push text past the right margin.
+        val maxCols = (usableWidth / charWidth).toInt().coerceAtLeast(1)
 
         val rows = buildRows(tab.content, maxCols)
 
         var pageNum = 1
         var page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNum).create())
         var canvas = page.canvas
-        var y = drawHeader(canvas, tab, youtubeUrl)
+        var y = drawHeader(canvas, tab, youtubeUrl, style)
+        val pageLimit = PAGE_HEIGHT - MARGIN_BOTTOM - 24f
+        // Guards pagination: a row taller than a whole page must still be drawn,
+        // otherwise the page-break loop would never terminate.
+        var rowsOnPage = 0
 
         for (row in rows) {
             val h = when (row) {
-                is PdfRow.ChordLyric -> CHORD_ROW_HEIGHT * row.segments.size
-                is PdfRow.Plain -> PLAIN_ROW_HEIGHT
-                is PdfRow.Gap -> row.height
+                is PdfRow.ChordLyric -> style.chordRowHeight * row.segments.size
+                is PdfRow.Plain -> style.plainRowHeight
+                is PdfRow.Gap -> row.height * (style.fontSize / BASE_FONT_SIZE)
             }
-            if (y + h > PAGE_HEIGHT - MARGIN_BOTTOM - 24f) {
-                drawPageFooter(canvas, pageNum, tab)
+            if (rowsOnPage > 0 && y + h > pageLimit) {
+                drawPageFooter(canvas, pageNum, tab, style)
                 document.finishPage(page)
                 pageNum++
                 page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNum).create())
                 canvas = page.canvas
                 y = MARGIN_TOP.toFloat()
+                rowsOnPage = 0
             }
             when (row) {
                 is PdfRow.ChordLyric -> {
@@ -162,21 +242,22 @@ object PdfGenerator {
                     for (seg in row.segments) {
                         val x0 = MARGIN_LEFT.toFloat()
                         for ((rel, name) in seg.chords) {
-                            canvas.drawText(name, x0 + rel * charWidth, sy + CHORD_BASELINE, chordPaint)
+                            canvas.drawText(name, x0 + rel * charWidth, sy + style.chordBaseline, chordPaint)
                         }
                         if (seg.lyric.isNotEmpty()) {
-                            canvas.drawText(seg.lyric, x0, sy + LYRIC_BASELINE, lyricPaint)
+                            canvas.drawText(seg.lyric, x0, sy + style.lyricBaseline, lyricPaint)
                         }
-                        sy += CHORD_ROW_HEIGHT
+                        sy += style.chordRowHeight
                     }
                 }
-                is PdfRow.Plain -> canvas.drawText(row.text, MARGIN_LEFT.toFloat(), y + 10f, lyricPaint)
+                is PdfRow.Plain -> canvas.drawText(row.text, MARGIN_LEFT.toFloat(), y + style.plainRowHeight, lyricPaint)
                 is PdfRow.Gap -> Unit
             }
             y += h
+            rowsOnPage++
         }
 
-        drawPageFooter(canvas, pageNum, tab)
+        drawPageFooter(canvas, pageNum, tab, style)
         document.finishPage(page)
         return document
     }
@@ -186,7 +267,7 @@ object PdfGenerator {
      * no other text) is paired with the following lyric line; inline tags such
      * as "some [ch]Am[/ch] words" become a chord at that exact column.
      */
-    private fun buildRows(content: String, maxCols: Int): List<PdfRow> {
+    internal fun buildRows(content: String, maxCols: Int): List<PdfRow> {
         val rows = mutableListOf<PdfRow>()
         var pendingChords: List<Pair<Int, String>>? = null
         var inTabBlock = false
@@ -366,7 +447,7 @@ object PdfGenerator {
      * Wraps text at maxCols (preferring spaces) and returns (startIndexInOriginal,
      * segment) pairs so chord offsets recorded on the original string stay valid.
      */
-    private fun wrapKeepOffsets(text: String, maxCols: Int): List<Pair<Int, String>> {
+    internal fun wrapKeepOffsets(text: String, maxCols: Int): List<Pair<Int, String>> {
         val result = mutableListOf<Pair<Int, String>>()
         if (text.isEmpty()) return result
         if (text.length <= maxCols) {
@@ -387,22 +468,22 @@ object PdfGenerator {
         return result
     }
 
-    private fun drawHeader(canvas: Canvas, tab: TabResult, youtubeUrl: String?): Float {
+    private fun drawHeader(canvas: Canvas, tab: TabResult, youtubeUrl: String?, metrics: PdfStyle): Float {
         val titlePaint = Paint().apply {
             color = colors.title
-            textSize = 22f
+            textSize = metrics.titleSize
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             isAntiAlias = true
         }
         val artistPaint = Paint().apply {
             color = colors.artist
-            textSize = 16f
+            textSize = metrics.artistSize
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             isAntiAlias = true
         }
         val metaPaint = Paint().apply {
             color = colors.meta
-            textSize = 11f
+            textSize = metrics.metaSize
             isAntiAlias = true
         }
         val dividerPaint = Paint().apply {
@@ -417,21 +498,25 @@ object PdfGenerator {
         }
         val badgeTextPaint = Paint().apply {
             color = colors.chord
-            textSize = 10f
+            textSize = metrics.badgeTextSize
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             isAntiAlias = true
         }
 
+        val right = (PAGE_WIDTH - MARGIN_RIGHT).toFloat()
+        val usableWidth = right - MARGIN_LEFT
         var y = MARGIN_TOP.toFloat()
 
-        canvas.drawText(truncate(tab.songName, 45, titlePaint), MARGIN_LEFT.toFloat(), y + 20f, titlePaint)
-        y += 30f
+        // Fixed, compact header: the title/artist/meta are context only, so they
+        // stay at a constant small size instead of growing with the body font.
+        canvas.drawText(fitToWidth(tab.songName, titlePaint, usableWidth), MARGIN_LEFT.toFloat(), y + 8f, titlePaint)
+        y += 11f
 
-        canvas.drawText(truncate("by ${tab.artistName}", 55, artistPaint), MARGIN_LEFT.toFloat(), y + 18f, artistPaint)
-        y += 28f
+        canvas.drawText(fitToWidth("by ${tab.artistName}", artistPaint, usableWidth), MARGIN_LEFT.toFloat(), y + 8f, artistPaint)
+        y += 11f
 
-        canvas.drawLine(MARGIN_LEFT.toFloat(), y, (PAGE_WIDTH - MARGIN_RIGHT).toFloat(), y, dividerPaint)
-        y += 14f
+        canvas.drawLine(MARGIN_LEFT.toFloat(), y, right, y, dividerPaint)
+        y += 6f
 
         val metaLine = buildString {
             append("Type: ${tab.type.ifEmpty { "Tab" }}")
@@ -439,44 +524,45 @@ object PdfGenerator {
             if (tab.capo > 0) append("  |  Capo: ${tab.capo}th fret")
             append("  |  Rating: ${"%.1f".format(tab.rating)}")
         }
-        canvas.drawText(truncate(metaLine, 80, metaPaint), MARGIN_LEFT.toFloat(), y + 12f, metaPaint)
-        y += 20f
+        canvas.drawText(fitToWidth(metaLine, metaPaint, usableWidth), MARGIN_LEFT.toFloat(), y + 8f, metaPaint)
+        y += 11f
 
         if (!youtubeUrl.isNullOrEmpty()) {
             val linkPaint = Paint().apply {
                 color = Color.parseColor("#1A73E8")
-                textSize = 11f
+                textSize = metrics.linkSize
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                 isAntiAlias = true
             }
-            canvas.drawText("Listen on YouTube: $youtubeUrl", MARGIN_LEFT.toFloat(), y + 12f, linkPaint)
-            y += 22f
+            canvas.drawText(fitToWidth("Listen on YouTube: $youtubeUrl", linkPaint, usableWidth), MARGIN_LEFT.toFloat(), y + 8f, linkPaint)
+            y += 11f
         }
 
         if (tab.applicature.isNotEmpty()) {
             val chords = tab.applicature.map { it.chord }
             var x = MARGIN_LEFT.toFloat()
-            val badgeSpacing = 6f
+            val badgeSpacing = 4f
+            val badgePad = 4f
             for (chord in chords) {
-                val chordWidth = badgeTextPaint.measureText(chord) + 16f
-                if (x + chordWidth > PAGE_WIDTH - MARGIN_RIGHT) {
-                    y += 20f
+                val chordWidth = badgeTextPaint.measureText(chord) + 8f
+                if (x + chordWidth > right) {
+                    y += metrics.badgeHeight + 2f
                     x = MARGIN_LEFT.toFloat()
                 }
-                canvas.drawRoundRect(x, y, x + chordWidth, y + 18f, 4f, 4f, badgePaint)
-                canvas.drawText(chord, x + 8f, y + 13f, badgeTextPaint)
+                canvas.drawRoundRect(x, y, x + chordWidth, y + metrics.badgeHeight, 2f, 2f, badgePaint)
+                canvas.drawText(chord, x + badgePad, y + metrics.badgeHeight * 0.72f, badgeTextPaint)
                 x += chordWidth + badgeSpacing
             }
-            y += 26f
+            y += metrics.badgeHeight + 5f
         }
 
-        canvas.drawLine(MARGIN_LEFT.toFloat(), y, (PAGE_WIDTH - MARGIN_RIGHT).toFloat(), y, dividerPaint)
-        y += 16f
+        canvas.drawLine(MARGIN_LEFT.toFloat(), y, right, y, dividerPaint)
+        y += 9f
 
         return y
     }
 
-    private fun drawPageFooter(canvas: Canvas, pageNum: Int, tab: TabResult) {
+    private fun drawPageFooter(canvas: Canvas, pageNum: Int, tab: TabResult, metrics: PdfStyle) {
         val dividerPaint = Paint().apply {
             color = colors.divider
             strokeWidth = 1f
@@ -485,18 +571,22 @@ object PdfGenerator {
         }
         val pageFooterPaint = Paint().apply {
             color = colors.meta
-            textSize = 9f
+            textSize = metrics.footerSize
             isAntiAlias = true
         }
         canvas.drawLine(
             MARGIN_LEFT.toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 5f,
             (PAGE_WIDTH - MARGIN_RIGHT).toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 5f, dividerPaint
         )
-        val footerText = "UG Viewer  |  Page $pageNum  |  Source: ${tab.urlWeb.take(60)}"
-        canvas.drawText(footerText, MARGIN_LEFT.toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 18f, pageFooterPaint)
+        val footerText = "UG Viewer  |  Page $pageNum  |  Font ${metrics.fontSize.toInt()}pt  |  Source: ${tab.urlWeb}"
+        val usableWidth = (PAGE_WIDTH - MARGIN_RIGHT - MARGIN_LEFT).toFloat()
+        canvas.drawText(
+            fitToWidth(footerText, pageFooterPaint, usableWidth),
+            MARGIN_LEFT.toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 18f, pageFooterPaint
+        )
     }
 
-    private fun saveToDownloads(context: Context, document: PdfDocument, fileName: String): File {
+    internal fun saveToDownloads(context: Context, document: PdfDocument, fileName: String): File {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val contentValues = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -525,13 +615,28 @@ object PdfGenerator {
         }
     }
 
-    private fun sanitizeFileName(name: String): String {
+    internal fun sanitizeFileName(name: String): String {
         return name.replace(Regex("[<>:\"/\\|?*]"), "_").trim()
     }
 
-    private fun truncate(text: String, maxChars: Int, paint: Paint): String {
-        if (text.length <= maxChars) return text
-        val truncated = text.take(maxChars - 1) + "\u2026"
-        return truncated
+    /**
+     * Clips text to the available width using the paint's real glyph metrics,
+     * appending an ellipsis. Character-count truncation is not enough for the
+     * proportional header/footer fonts, which can overflow the page once the
+     * selected font size (and therefore the header scale) grows.
+     */
+    internal fun fitToWidth(text: String, paint: Paint, maxWidth: Float): String {
+        if (text.isEmpty() || maxWidth <= 0f) return ""
+        if (paint.measureText(text) <= maxWidth) return text
+        val ellipsis = "\u2026"
+        val avail = maxWidth - paint.measureText(ellipsis)
+        if (avail <= 0f) return ellipsis
+        var lo = 0
+        var hi = text.length
+        while (lo < hi) {
+            val mid = (lo + hi + 1) / 2
+            if (paint.measureText(text, 0, mid) <= avail) lo = mid else hi = mid - 1
+        }
+        return text.substring(0, lo).trimEnd() + ellipsis
     }
 }

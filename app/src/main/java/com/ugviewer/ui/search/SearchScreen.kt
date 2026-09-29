@@ -25,8 +25,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -37,6 +40,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ugviewer.api.SearchTab
 import com.ugviewer.ui.theme.*
+import com.ugviewer.BuildConfig
 import com.ugviewer.R
 import com.ugviewer.viewmodel.SearchViewModel
 
@@ -44,9 +48,33 @@ import com.ugviewer.viewmodel.SearchViewModel
 @Composable
 fun SearchScreen(
     onTabSelected: (Long) -> Unit,
+    onChordShapesSelected: () -> Unit,
     viewModel: SearchViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var searchFieldFocused by remember { mutableStateOf(false) }
+
+    fun submitSearch() {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        viewModel.search()
+    }
+
+    // The keyboard would otherwise stay up over the chord screen's root chips.
+    fun openChordShapes() {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        onChordShapesSelected()
+    }
+
+    LaunchedEffect(searchFieldFocused) {
+        if (searchFieldFocused) {
+            keyboardController?.show()
+        }
+    }
+
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -65,7 +93,7 @@ fun SearchScreen(
             val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             if (!matches.isNullOrEmpty()) {
                 viewModel.query = matches[0]
-                viewModel.search()
+                submitSearch()
             }
         }
     }
@@ -138,7 +166,14 @@ fun SearchScreen(
                 text = "Search for Artist Songs and Chords for Guitar",
                 fontSize = 14.sp,
                 color = TextSecondary,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            Text(
+                text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                fontSize = 11.sp,
+                color = TextSecondary.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 12.dp)
             )
 
             Row(
@@ -150,7 +185,8 @@ fun SearchScreen(
                     onValueChange = { viewModel.query = it },
                     modifier = Modifier
                         .weight(1f)
-                        .height(60.dp),
+                        .height(60.dp)
+                        .onFocusChanged { searchFieldFocused = it.isFocused },
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 10.sp),
                     placeholder = { Text("Song name or artist...", fontSize = 10.sp, color = TextSecondary) },
                     leadingIcon = {
@@ -158,7 +194,7 @@ fun SearchScreen(
                     },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { viewModel.search() }),
+                    keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
@@ -209,7 +245,7 @@ fun SearchScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
-                onClick = { viewModel.search() },
+                onClick = { submitSearch() },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = viewModel.query.isNotBlank() && !viewModel.isLoading,
                 colors = ButtonDefaults.buttonColors(containerColor = Highlight),
@@ -224,6 +260,17 @@ fun SearchScreen(
                 } else {
                     Text("Search", fontWeight = FontWeight.Bold)
                 }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = { openChordShapes() },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Chord Shape Search", fontWeight = FontWeight.Bold)
             }
 
             Spacer(modifier = Modifier.height(16.dp))

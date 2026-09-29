@@ -14,7 +14,9 @@ import com.ugviewer.api.TabResult
 import com.ugviewer.api.UGApiClient
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.util.YouTubeHelper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -36,11 +38,15 @@ class TabViewerViewModel : ViewModel() {
     var isChordType by mutableStateOf(false)
     var pdfPages by mutableStateOf<List<Bitmap>>(emptyList())
     var isRenderingPdf by mutableStateOf(false)
+    var pdfFontSize by mutableFloatStateOf(PdfGenerator.DEFAULT_FONT_SIZE)
     private var pdfBytes: ByteArray? = null
+    private var renderJob: Job? = null
 
     fun loadTab(tabId: Long) {
         isLoading = true
         errorMessage = null
+        // Drop the old previews by reference only; recycling here could race a
+        // frame that is still drawing them. GC reclaims them safely.
         pdfPages = emptyList()
         pdfBytes = null
         youtubeUrl = null
@@ -94,20 +100,36 @@ class TabViewerViewModel : ViewModel() {
         }
     }
 
-    private suspend fun generatePdfPreview(tabResult: TabResult) {
-        isRenderingPdf = true
-        try {
-            val bytes = withContext(Dispatchers.IO) {
-                PdfGenerator.generatePdfToBytes(tabResult)
+    private fun generatePdfPreview(tabResult: TabResult) {
+        renderJob?.cancel()
+        renderJob = viewModelScope.launch {
+            isRenderingPdf = true
+            try {
+                val link = youtubeUrl
+                val size = pdfFontSize
+                val bytes = withContext(Dispatchers.IO) {
+                    PdfGenerator.generatePdfToBytes(tabResult, link, size)
+                }
+                pdfBytes = bytes
+                val pages = withContext(Dispatchers.IO) { renderPdfPages(bytes) }
+                // A newer font size may have been picked while we were rendering.
+                if (size != pdfFontSize) return@launch
+                pdfPages = pages
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                errorMessage = "PDF preview failed: ${e.message}"
+            } finally {
+                isRenderingPdf = false
             }
-            pdfBytes = bytes
-            val pages = renderPdfPages(bytes)
-            pdfPages = pages
-        } catch (e: Exception) {
-            errorMessage = "PDF preview failed: ${e.message}"
-        } finally {
-            isRenderingPdf = false
         }
+    }
+
+    /** Re-renders the PDF preview at the chosen font size. */
+    fun updatePdfFontSize(size: Float) {
+        if (size == pdfFontSize) return
+        pdfFontSize = size
+        tab?.takeIf { isChordType }?.let { generatePdfPreview(it) }
     }
 
     private fun renderPdfPages(pdfData: ByteArray): List<Bitmap> {
@@ -156,7 +178,7 @@ class TabViewerViewModel : ViewModel() {
                 if (youtubeUrl == null) youtubeUrl = link
 
                 val file = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdf(context, currentTab, link)
+                    PdfGenerator.generatePdf(context, currentTab, link, pdfFontSize)
                 }
                 pdfSuccess = if (link != null) {
                     "Saved to Downloads/UG Viewer/${file.name} • YouTube link included"
@@ -185,6 +207,8 @@ class TabViewerViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
+        renderJob?.cancel()
+        // Safe to free here: the screen has been disposed, nothing is drawing.
         pdfPages.forEach { it.recycle() }
         pdfPages = emptyList()
     }

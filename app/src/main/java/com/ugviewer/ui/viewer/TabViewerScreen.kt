@@ -2,8 +2,9 @@ package com.ugviewer.ui.viewer
 
 import android.graphics.Bitmap
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.view.WindowManager
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -24,11 +25,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ugviewer.ui.theme.*
+import com.ugviewer.util.PdfGenerator
 import com.ugviewer.viewmodel.TabViewerViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,9 +49,10 @@ fun TabViewerScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Keep the screen on (no dimming or timeout) while the tab/PDF is displayed.
-    val window = (context as? Activity)?.window
-    DisposableEffect(Unit) {
+    // Keep the screen on (no dimming, no sleep timeout) for as long as this
+    // screen is composed, which covers the whole time a PDF is displayed.
+    val window = remember(context) { context.findActivity()?.window }
+    DisposableEffect(window) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
@@ -155,7 +157,13 @@ fun TabViewerScreen(
             )
         },
         bottomBar = {
-            if (!viewModel.isChordType) {
+            if (viewModel.isChordType) {
+                PdfFontSizeBar(
+                    fontSize = viewModel.pdfFontSize,
+                    isRendering = viewModel.isRenderingPdf,
+                    onSelect = { viewModel.updatePdfFontSize(it) }
+                )
+            } else {
                 FontSizeBar(
                     fontSize = viewModel.fontSize,
                     onDecrease = { viewModel.decreaseFontSize() },
@@ -305,76 +313,18 @@ fun PdfPreviewContent(
     viewModel: TabViewerViewModel
 ) {
     val context = LocalContext.current
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding)
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(0.5f, 3f)
-                    offset += pan
-                }
-            }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offset.x,
-                    translationY = offset.y
-                )
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp)
-        ) {
-            Spacer(modifier = Modifier.height(8.dp))
-
+    PdfPagesPreview(
+        pages = pages,
+        modifier = Modifier.padding(padding),
+        topContent = {
             YouTubeListenBar(
                 youtubeUrl = viewModel.youtubeUrl,
                 isLoading = viewModel.isFetchingYouTube,
                 onOpen = { viewModel.openYouTube(context) }
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            pages.forEachIndexed { index, bitmap ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(8.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                ) {
-                    Column {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "PDF Page ${index + 1}",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
-                            contentScale = ContentScale.Fit
-                        )
-                        Text(
-                            text = "Page ${index + 1}",
-                            fontSize = 10.sp,
-                            color = Color.Gray,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            val context = LocalContext.current
+        },
+        bottomContent = {
             Button(
                 onClick = { viewModel.savePdf(context) },
                 modifier = Modifier
@@ -391,10 +341,8 @@ fun PdfPreviewContent(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Save PDF to Downloads", fontWeight = FontWeight.Bold)
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
-    }
+    )
 }
 
 @Composable
@@ -671,6 +619,92 @@ fun FontSizeBar(fontSize: Float, onDecrease: () -> Unit, onIncrease: () -> Unit)
                     tint = TextPrimary,
                     modifier = Modifier.size(20.dp)
                 )
+            }
+        }
+    }
+}
+
+/** Unwraps any ContextWrapper chain to reach the hosting Activity. */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
+}
+
+/** Pull-down that re-renders the PDF preview at the chosen body font size. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfFontSizeBar(
+    fontSize: Float,
+    isRendering: Boolean,
+    onSelect: (Float) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Surface(color = Surface, shadowElevation = 8.dp) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "PDF font size",
+                fontSize = 14.sp,
+                color = TextSecondary
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Box {
+                OutlinedButton(
+                    onClick = { expanded = true },
+                    enabled = !isRendering,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Accent,
+                        contentColor = TextPrimary
+                    ),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (isRendering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = TextPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            text = "${fontSize.toInt()} pt",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    PdfGenerator.FONT_SIZE_OPTIONS.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "${option.toInt()} pt",
+                                    color = if (option == fontSize) Highlight else TextPrimary,
+                                    fontWeight = if (option == fontSize) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                expanded = false
+                                onSelect(option)
+                            }
+                        )
+                    }
+                }
             }
         }
     }
