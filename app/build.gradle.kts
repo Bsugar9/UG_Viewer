@@ -6,24 +6,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Version is derived from the commit count so every change that is committed
-// bumps it automatically: 2.00, 2.01, 2.02 ... (no manual editing).
-// versionCode must stay strictly increasing for the Play Store / Android to
-// accept an upgrade, so it is the raw commit count.
-//
-// TWO_POINT_ZERO_COMMIT is the commit that opened the 2.x line. Move it forward
-// only when deliberately starting a new major version.
-val twoPointZeroCommit: Int = 8
-val versionMinor: Int = run {
-    val head = providers.exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
-    }.standardOutput.asText.map { it.trim() }
-    head.getOrNull()?.toIntOrNull()?.let { count ->
-        (count - twoPointZeroCommit).coerceAtLeast(0)
-    } ?: 0
-}
-val versionCodeValue: Int = twoPointZeroCommit + versionMinor
-val versionNameValue: String = "2.%02d".format(versionMinor)
+val versionCodeValue: Int = 200
+val versionNameValue: String = "2.00"
 
 // Release signing secrets are never committed. They are read from
 // keystore.properties (git-ignored) and fall back to environment variables, so a
