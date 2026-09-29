@@ -43,9 +43,11 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     /** The demo sheet's content, loaded once. */
     private var demo: TabResult? = null
 
-    // The seven knobs.
-    var chordSize by mutableStateOf(32f)
-    var lyricSize by mutableStateOf(32f)
+    // The seven knobs. Sizes start at the Small preset: it is the layout the
+    // sheets read best at, and the shipped 32pt start only showed off how
+    // badly centred chords collide with the line above.
+    var chordSize by mutableStateOf(PdfGenerator.CHORD_SMALL_PT)
+    var lyricSize by mutableStateOf(PdfGenerator.LYRIC_SMALL_PT)
     var gapAboveChord by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.gapAboveChord)
     var gapBelowChord by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.gapBelowChord)
     var plainRowHeight by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.plainRowHeight)
@@ -224,8 +226,8 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
         val app = getApplication<Application>()
         PdfThemeStore.clear(app)
         hasSavedLayout = false
-        chordSize = PdfGenerator.DEFAULT_FONT_SIZE
-        lyricSize = PdfGenerator.DEFAULT_FONT_SIZE
+        chordSize = PdfGenerator.CHORD_SMALL_PT
+        lyricSize = PdfGenerator.LYRIC_SMALL_PT
         val d = PdfGenerator.PdfTheme.DEFAULT
         gapAboveChord = d.gapAboveChord
         gapBelowChord = d.gapBelowChord

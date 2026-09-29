@@ -130,6 +130,6 @@ class PdfLayoutTest {
             assertTrue("font size $size out of range", size in PdfGenerator.MIN_FONT_SIZE..PdfGenerator.MAX_FONT_SIZE)
         }
         assertTrue(PdfGenerator.FONT_SIZE_OPTIONS.contains(PdfGenerator.DEFAULT_FONT_SIZE))
-        assertEquals(21, PdfGenerator.FONT_SIZE_OPTIONS.size)
+        assertEquals(33, PdfGenerator.FONT_SIZE_OPTIONS.size)
     }
 }

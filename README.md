@@ -18,9 +18,9 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
 - **Chord charts** rendered as PDF with color-coded formatting
 - **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, survive line wraps without being split, and every lyric line reserves the chord band above it so the sheet stays even
 - **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
-- **Page presets** — Small, Fit To Page, or Custom with independent chord/lyric font dials (22-42pt), re-rendered live in the preview
+- **Page presets** — Small, Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview
 - **PDF Design Studio** — design how sheets look, then save it as the default everywhere:
-  - Sliders for chord & lyric size (22-42pt), space above the chord, chord-to-word gap (equal values centre the chord between the lyric lines), lyric line height, and stanza gap
+  - Sliders for chord & lyric size (10-42pt, starting at the Small preset), space above the chord, chord-to-word gap (equal values centre the chord between the lyric lines), lyric line height, and stanza gap
   - A **wrap-width slider** with a red guide rule drawn right on the preview page — drag it and watch exactly where lines wrap
   - Previews against Pink Floyd's "Pigs on the Wing" (fetched from Ultimate Guitar, with an offline stand-in chart)
   - Opened from the ⚙ icon beside the version in the header; **Save as default** applies to every future preview and PDF

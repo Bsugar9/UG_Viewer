@@ -109,7 +109,7 @@ fun LayoutStudioScreen(
                     label = "Chord size",
                     value = viewModel.chordSize,
                     valueText = "${viewModel.chordSize.toInt()}pt",
-                    range = 22f..42f,
+                    range = 10f..42f,
                     onChange = {
                         viewModel.chordSize = it
                         viewModel.scheduleRender()
@@ -119,7 +119,7 @@ fun LayoutStudioScreen(
                     label = "Lyric size",
                     value = viewModel.lyricSize,
                     valueText = "${viewModel.lyricSize.toInt()}pt",
-                    range = 22f..42f,
+                    range = 10f..42f,
                     onChange = {
                         viewModel.lyricSize = it
                         viewModel.scheduleRender()

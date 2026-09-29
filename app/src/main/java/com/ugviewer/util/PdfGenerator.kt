@@ -37,9 +37,9 @@ object PdfGenerator {
     // never scale with the body font, which would steal lines from the tab.
     private const val HEADER_FONT_SIZE = 8f
 
-    val FONT_SIZE_OPTIONS = (22..42).map { it.toFloat() }
+    val FONT_SIZE_OPTIONS = (10..42).map { it.toFloat() }
     const val DEFAULT_FONT_SIZE = 32f
-    const val MIN_FONT_SIZE = 22f
+    const val MIN_FONT_SIZE = 10f
     const val MAX_FONT_SIZE = 42f
 
     // Custom dial defaults: where the two sizes start the first time Custom is
