@@ -135,17 +135,20 @@ object PdfGenerator {
                 val kl = lyricSize / BASE_FONT_SIZE
                 // One number sets the desired lyric-to-lyric pitch; the chord's
                 // baseline is then EXACTLY halfway between the two lyric
-                // baselines (the row's vertical centre) — centring is geometry,
-                // no slider can de-centre it. When the fonts are too big for
-                // the chosen pitch, the ROW GROWS to the ink-clearance minimum
-                // (see [minimumChordRowHeight]) instead of the chord moving or
-                // touching either lyric line.
+                // BASELINES. The row is not symmetric around its middle: the
+                // bottom lyric baseline sits a descender's height above the row
+                // bottom and the top one the same distance below the row top,
+                // so the true midpoint is h/2 - d, not h/2. Centring is
+                // geometry — no slider can de-centre it. When the fonts are too
+                // big for the chosen pitch, the ROW GROWS to the ink-clearance
+                // minimum (see [minimumChordRowHeight]) instead of the chord
+                // moving or touching either lyric line.
                 val chordRowHeight = maxOf(
                     theme.chordLinePitch * BASE_FONT_SIZE * maxOf(kc, kl),
                     minimumChordRowHeight(chordSize, lyricSize)
                 )
-                val chordBaseline = chordRowHeight / 2f
                 val lyricBaseline = chordRowHeight - DESCENDER * BASE_FONT_SIZE * kl
+                val chordBaseline = lyricBaseline - chordRowHeight / 2f
                 return PdfStyle(
                     chordFontSize = chordSize,
                     lyricFontSize = lyricSize,
@@ -191,14 +194,16 @@ object PdfGenerator {
         val lyricDescender = DESCENDER * lyricFontSize
         val lyricCap = LYRIC_CAP * lyricFontSize
         val chordDescent = CHORD_DESCENT * chordFontSize
-        // Each half-row must cover, with a pad to spare:
-        //  - above the centred chord: the line-above's descenders + chord ascent
-        //  - below it: chord descent + the lyric's capitals + its own descender
-        //    (the lyric baseline sits a descender's height above the row bottom)
+        // The centred chord baseline sits at h/2 - d (the lyric baselines'
+        // midpoint; the previous line's baseline is d ABOVE this row's top),
+        // so each half-row must cover, from that midpoint, with a pad:
+        //  - upward: chord ascent + the line-above's descender depth
+        //  - downward: chord descent + the lyric's cap height (the -d in the
+        //    midpoint cancels the descender allowance on this side)
         val pad = 0.12f * maxOf(chordFontSize, lyricFontSize)
         return 2f * maxOf(
             chordAscent + lyricDescender,
-            chordDescent + lyricCap + lyricDescender
+            chordDescent + lyricCap
         ) + 2f * pad
     }
 

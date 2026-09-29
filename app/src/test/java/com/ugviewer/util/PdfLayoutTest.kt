@@ -32,23 +32,54 @@ class PdfLayoutTest {
     }
 
     @Test
+    fun `chord baseline sits exactly halfway between the lyric baselines`() {
+        // Baselines, not the row middle: the top lyric baseline is a
+        // descender's height below the row top, the bottom one the same
+        // distance above the row bottom, and the chord baseline must be
+        // their exact midpoint — that is what centring means on a page.
+        for (pitch in listOf(1.5f, 2f, 3f)) {
+            for (font in listOf(10.5f, 22f, 32f, 42f)) {
+                val row = maxOf(
+                    pitch * 10f * font / 10f,
+                    PdfGenerator.minimumChordRowHeight(font, font)
+                )
+                // Row top = 0. The line ABOVE's baseline is a descender above
+                // the row top; this row's lyric baseline the same distance
+                // above the row bottom.
+                val d = 0.35f * font
+                val topLyricBaseline = -d
+                val bottomLyricBaseline = row - d
+                val chordBaseline = bottomLyricBaseline - row / 2f
+                val gapAbove = chordBaseline - topLyricBaseline
+                val gapBelow = bottomLyricBaseline - chordBaseline
+                assertEquals("pitch=$pitch font=$font", gapAbove, gapBelow, 0.01f)
+            }
+        }
+    }
+
+    @Test
     fun `centred chord clears both lyric lines at worst-case fonts`() {
         // 32pt chords centred in a minimum-height row: chord ink must not
         // reach the line above's descenders or the lyric capitals below.
+        // Coordinates: row top = 0. The previous line's baseline is a
+        // descender ABOVE the row top; this row's lyric baseline is a
+        // descender above the row bottom; the chord baseline is the midpoint
+        // of the two lyric baselines.
         val chordSize = 32f
         val lyricSize = 32f
         val row = PdfGenerator.minimumChordRowHeight(chordSize, lyricSize)
+        val d = 0.35f * lyricSize
         val chordAscent = 0.78f * chordSize
         val chordDescent = 0.22f * chordSize
         val lyricCap = 0.72f * lyricSize
-        // Chord top sits at row/2 - ascent from the row top; the line above's
-        // descenders reach DESCENDER * size past that row's last baseline.
-        val chordTop = row / 2f - chordAscent
-        val upperInk = 0.35f * lyricSize
-        val chordBottom = row / 2f + chordDescent
-        val lyricTop = row - 0.35f * lyricSize - lyricCap
-        assertTrue("chord grazes line above ($chordTop < $upperInk)", chordTop >= upperInk)
-        assertTrue("chord touches its lyric ($chordBottom > $lyricTop)", chordBottom <= lyricTop)
+        val prevLyricBaseline = -d          // above this row's top
+        val thisLyricBaseline = row - d
+        val chordBaseline = (prevLyricBaseline + thisLyricBaseline) / 2f
+        val chordTop = chordBaseline - chordAscent
+        val chordBottom = chordBaseline + chordDescent
+        val lyricTop = thisLyricBaseline - lyricCap
+        assertTrue("chord grazes line above (top $chordTop < prev baseline $prevLyricBaseline)", chordTop >= prevLyricBaseline)
+        assertTrue("chord touches its lyric (bottom $chordBottom > cap top $lyricTop)", chordBottom <= lyricTop)
     }
 
     @Test
