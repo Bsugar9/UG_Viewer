@@ -48,8 +48,7 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     // badly centred chords collide with the line above.
     var chordSize by mutableStateOf(PdfGenerator.CHORD_SMALL_PT)
     var lyricSize by mutableStateOf(PdfGenerator.LYRIC_SMALL_PT)
-    var gapAboveChord by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.gapAboveChord)
-    var gapBelowChord by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.gapBelowChord)
+    var chordLinePitch by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.chordLinePitch)
     var plainRowHeight by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.plainRowHeight)
     var stanzaGap by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.stanzaGap)
     var wrapFraction by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.wrapFraction)
@@ -133,7 +132,7 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     )
 
     private val theme: PdfGenerator.PdfTheme
-        get() = PdfGenerator.PdfTheme(gapAboveChord, gapBelowChord, plainRowHeight, stanzaGap, wrapFraction)
+        get() = PdfGenerator.PdfTheme(chordLinePitch, plainRowHeight, stanzaGap, wrapFraction)
 
     /** Queues a re-render; rapid slider moves collapse into one render. */
     fun scheduleRender() {
@@ -229,8 +228,7 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
         chordSize = PdfGenerator.CHORD_SMALL_PT
         lyricSize = PdfGenerator.LYRIC_SMALL_PT
         val d = PdfGenerator.PdfTheme.DEFAULT
-        gapAboveChord = d.gapAboveChord
-        gapBelowChord = d.gapBelowChord
+        chordLinePitch = d.chordLinePitch
         plainRowHeight = d.plainRowHeight
         stanzaGap = d.stanzaGap
         wrapFraction = d.wrapFraction

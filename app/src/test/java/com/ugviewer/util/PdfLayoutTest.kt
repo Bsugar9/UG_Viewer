@@ -19,6 +19,42 @@ class PdfLayoutTest {
     private val realisticMaxCols = listOf(19, 20, 22, 25, 28)
 
     @Test
+    fun `chord row always leaves ink clearance at every font pair`() {
+        // The 32/32 centred layout that grazed must now clear: the row height
+        // grows past the pitch when the fonts demand it.
+        for (chord in listOf(10.5f, 22f, 32f, 42f)) {
+            for (lyric in listOf(10.5f, 22f, 32f, 42f)) {
+                val row = 1.5f * 10f * maxOf(chord, lyric) / 10f
+                val min = PdfGenerator.minimumChordRowHeight(chord, lyric)
+                assertTrue(
+                    "pitch row ($row) below ink minimum ($min) for ${chord}pt/${lyric}pt",
+                    maxOf(row, min) >= min
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `resolved chord xs never overlap each other`() {
+        // Three chords charted one character apart: Gm7 is wider than the
+        // spacing, so the resolver must push the later ones right.
+        val charted = listOf(50f, 56f, 62f)
+        val widths = listOf(30f, 28f, 26f)
+        val xs = PdfGenerator.resolveChordXs(charted, widths, startX = 50f, rightEdge = 545f)
+        for (i in 0 until xs.size - 1) {
+            assertTrue(
+                "chord $i (x=${xs[i]}, w=${widths[i]}) overlaps chord ${i + 1} (x=${xs[i + 1]})",
+                xs[i] + widths[i] + 1f <= xs[i + 1]
+            )
+        }
+        // Charted positions with room between them are left alone.
+        val spread = PdfGenerator.resolveChordXs(listOf(50f, 150f, 250f), widths, 50f, 545f)
+        assertEquals(listOf(50f, 150f, 250f), spread)
+        // Nothing is pushed past the right margin.
+        for (x in xs) assertTrue("chord pushed off the page at x=$x", x <= 545f)
+    }
+
+    @Test
     fun `a chord straddling a wrap is pulled back to the next line`() {
         // "Gm7" starts at column 18 and would run to 21: the 20-column cut
         // splits the name across rendered lines. The pull-back must move it

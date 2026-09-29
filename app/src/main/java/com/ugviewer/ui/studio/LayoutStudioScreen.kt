@@ -126,22 +126,12 @@ fun LayoutStudioScreen(
                     }
                 )
                 StudioSlider(
-                    label = "Space above chord",
-                    value = viewModel.gapAboveChord,
-                    valueText = "%.2f".format(viewModel.gapAboveChord),
-                    range = 0.3f..2f,
+                    label = "Line spacing (top and bottom lyric lines)",
+                    value = viewModel.chordLinePitch,
+                    valueText = "%.2f".format(viewModel.chordLinePitch),
+                    range = 0.9f..2.8f,
                     onChange = {
-                        viewModel.gapAboveChord = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Chord-to-word gap",
-                    value = viewModel.gapBelowChord,
-                    valueText = "%.2f".format(viewModel.gapBelowChord),
-                    range = 0.3f..2f,
-                    onChange = {
-                        viewModel.gapBelowChord = it
+                        viewModel.chordLinePitch = it
                         viewModel.scheduleRender()
                     }
                 )

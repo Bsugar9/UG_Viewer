@@ -11,8 +11,7 @@ object PdfThemeStore {
 
     private const val PREFS_NAME = "pdf_layout_theme"
     private const val KEY_SAVED = "saved"
-    private const val KEY_GAP_ABOVE = "gapAboveChord"
-    private const val KEY_GAP_BELOW = "gapBelowChord"
+    private const val KEY_CHORD_PITCH = "chordLinePitch"
     private const val KEY_PLAIN_ROW = "plainRowHeight"
     private const val KEY_STANZA_GAP = "stanzaGap"
     private const val KEY_WRAP_FRACTION = "wrapFraction"
@@ -29,8 +28,7 @@ object PdfThemeStore {
             val d = PdfGenerator.PdfTheme.DEFAULT
             Saved(
                 theme = PdfGenerator.PdfTheme(
-                    gapAboveChord = prefs.getFloat(KEY_GAP_ABOVE, d.gapAboveChord),
-                    gapBelowChord = prefs.getFloat(KEY_GAP_BELOW, d.gapBelowChord),
+                    chordLinePitch = prefs.getFloat(KEY_CHORD_PITCH, d.chordLinePitch),
                     plainRowHeight = prefs.getFloat(KEY_PLAIN_ROW, d.plainRowHeight),
                     stanzaGap = prefs.getFloat(KEY_STANZA_GAP, d.stanzaGap),
                     wrapFraction = prefs.getFloat(KEY_WRAP_FRACTION, d.wrapFraction)
@@ -47,8 +45,7 @@ object PdfThemeStore {
     fun save(context: Context, theme: PdfGenerator.PdfTheme, chordSize: Float, lyricSize: Float) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
             putBoolean(KEY_SAVED, true)
-            putFloat(KEY_GAP_ABOVE, theme.gapAboveChord)
-            putFloat(KEY_GAP_BELOW, theme.gapBelowChord)
+            putFloat(KEY_CHORD_PITCH, theme.chordLinePitch)
             putFloat(KEY_PLAIN_ROW, theme.plainRowHeight)
             putFloat(KEY_STANZA_GAP, theme.stanzaGap)
             putFloat(KEY_WRAP_FRACTION, theme.wrapFraction)

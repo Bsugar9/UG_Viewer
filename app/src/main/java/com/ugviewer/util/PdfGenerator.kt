@@ -71,14 +71,21 @@ object PdfGenerator {
     /** Room left under a lyric baseline for descenders (g, y, p) — not a knob. */
     private const val DESCENDER = 0.35f
 
+    // Glyph-metric estimates used to keep ink apart: how far a chord name
+    // rises above its baseline, how far it hangs below, and how far a lyric
+    // capital rises above its baseline.
+    private const val CHORD_ASCENT = 0.78f
+    private const val CHORD_DESCENT = 0.22f
+    private const val LYRIC_CAP = 0.72f
+
     /**
      * The visual rhythm of a chord sheet, in multiples of the 10pt base size.
      *
-     * [gapAboveChord] is the distance from the previous lyric line's baseline
-     * down to the chord's baseline; [gapBelowChord] from the chord's baseline
-     * to its own lyric's baseline. Setting the two EQUAL centers the chord
-     * vertically between the lyric lines; a small [gapBelowChord] hugs the
-     * chord onto the word it belongs to.
+     * [chordLinePitch] is the distance from one lyric line's baseline to the
+     * next (across the chord band). The chord is ALWAYS drawn exactly halfway
+     * between the two lyric lines — centring is a guarantee, not a setting —
+     * so this one number is how close together the top and bottom lyric lines
+     * sit.
      *
      * [plainRowHeight] governs lyric-only lines and [stanzaGap] the blank-line
      * spacing between sections. [wrapFraction] decides how much of the page
@@ -87,18 +94,17 @@ object PdfGenerator {
      * chord-over-its-word guarantee holds at every setting.
      */
     data class PdfTheme(
-        val gapAboveChord: Float = 0.5f,
-        val gapBelowChord: Float = 0.5f,
+        val chordLinePitch: Float = 1.5f,
         val plainRowHeight: Float = 1.2f,
         val stanzaGap: Float = 0.6f,
         val wrapFraction: Float = 1.0f
     ) {
         companion object {
-            /** The shipped default: chords centred between the lyric lines. */
+            /** The shipped default: snug, with the chord centred as always. */
             val DEFAULT = PdfTheme()
 
             /** The original roomier layout, kept for comparison. */
-            val LOOSE = PdfTheme(gapAboveChord = 1.0f, gapBelowChord = 0.85f)
+            val LOOSE = PdfTheme(chordLinePitch = 2.2f)
         }
     }
 
@@ -127,21 +133,25 @@ object PdfGenerator {
             fun forFontSizes(chordSize: Float, lyricSize: Float, theme: PdfTheme): PdfStyle {
                 val kc = chordSize / BASE_FONT_SIZE
                 val kl = lyricSize / BASE_FONT_SIZE
-                // gapAboveChord is measured from the previous lyric BASELINE,
-                // so equal slider values put the chord exactly halfway between
-                // the two lyric lines; the descender allowance is folded into
-                // that measurement (hence the subtraction here).
-                val chordBaseline =
-                    ((theme.gapAboveChord - DESCENDER) * BASE_FONT_SIZE * maxOf(kc, kl))
-                        .coerceAtLeast(0.15f * BASE_FONT_SIZE * maxOf(kc, kl))
-                val lyricBaseline = chordBaseline + theme.gapBelowChord * BASE_FONT_SIZE * kl
+                // One number sets the desired lyric-to-lyric pitch; the chord's
+                // baseline is then exactly halfway between the two lyric
+                // baselines — centring falls out of the geometry, so no slider
+                // can ever de-centre it. When the fonts are too big for the
+                // chosen pitch, the ROW GROWS to the minimum that keeps chord
+                // ink clear of both neighbouring lyric lines (see
+                // [minimumChordRowHeight]) rather than the chord moving.
+                val chordRowHeight = maxOf(
+                    theme.chordLinePitch * BASE_FONT_SIZE * maxOf(kc, kl),
+                    minimumChordRowHeight(chordSize, lyricSize)
+                )
+                val lyricBaseline = chordRowHeight - DESCENDER * BASE_FONT_SIZE * kl
+                val chordBaseline = lyricBaseline - chordRowHeight / 2f
                 return PdfStyle(
                     chordFontSize = chordSize,
                     lyricFontSize = lyricSize,
                     chordBaseline = chordBaseline,
                     lyricBaseline = lyricBaseline,
-                    chordRowHeight = theme.gapAboveChord * BASE_FONT_SIZE * maxOf(kc, kl) +
-                        theme.gapBelowChord * BASE_FONT_SIZE * kl,
+                    chordRowHeight = chordRowHeight,
                     plainRowHeight = theme.plainRowHeight * BASE_FONT_SIZE * kl,
                     gapHeight = theme.stanzaGap * BASE_FONT_SIZE * kl,
                     // Header/footer metrics are fixed (not scaled) so a large
@@ -168,6 +178,45 @@ object PdfGenerator {
         val headerBg: Int = Color.parseColor("#F0F0F5"),
         val chordBadge: Int = Color.parseColor("#FFF3E0")
     )
+
+    /**
+     * The smallest chord+lyric row (in points) in which a centred chord name
+     * fits without its ink touching either neighbouring lyric line: half the
+     * row must cover the chord's rise above its baseline plus the line-above's
+     * descenders, and half must cover the lyric's capitals plus the chord's
+     * hang below its baseline. Exposed for tests.
+     */
+    internal fun minimumChordRowHeight(chordFontSize: Float, lyricFontSize: Float): Float {
+        val chordAscent = CHORD_ASCENT * chordFontSize
+        val lyricDescender = DESCENDER * lyricFontSize
+        val lyricCap = LYRIC_CAP * lyricFontSize
+        val chordDescent = CHORD_DESCENT * chordFontSize
+        return 2f * maxOf(chordAscent + lyricDescender, lyricCap + chordDescent)
+    }
+
+    /**
+     * Horizontal no-overlap resolution: chords are charted at their lyric
+     * columns, but two chord names can be closer than the first one is wide.
+     * Walks left to right pushing each name past the previous one's end, never
+     * past the right margin. Exposed for tests.
+     */
+    internal fun resolveChordXs(
+        charted: List<Float>,
+        widths: List<Float>,
+        startX: Float,
+        rightEdge: Float
+    ): List<Float> {
+        val resolved = MutableList(charted.size) { 0f }
+        var cursor = startX
+        val gap = 1.5f
+        for (i in charted.indices) {
+            val width = widths.getOrElse(i) { 0f }
+            val x = maxOf(charted[i], cursor).coerceAtMost((rightEdge - width).coerceAtLeast(startX))
+            resolved[i] = x
+            cursor = x + width + gap
+        }
+        return resolved
+    }
 
     private val colors = PdfColors()
 
@@ -391,21 +440,31 @@ object PdfGenerator {
                     var sy = y
                     for (seg in row.segments) {
                         val x0 = MARGIN_LEFT.toFloat()
-                        for ((rel, name) in seg.chords) {
-                            val x = x0 + rel * charWidth
-                            canvas.drawText(name, x, sy + style.chordBaseline, chordPaint)
-                            // Same box the tap target uses: half a character of
-                            // slack around the glyphs so a near miss still hits.
-                            chordHits.add(
-                                ChordHit(
-                                    page = pageNum,
-                                    name = name,
-                                    left = x - charWidth / 2f,
-                                    top = sy,
-                                    right = x + chordPaint.measureText(name) + charWidth / 2f,
-                                    bottom = sy + style.chordRowHeight
+                        if (seg.chords.isNotEmpty()) {
+                            // Resolve horizontal collisions before drawing: a
+                            // pushed chord keeps its own name whole but may sit
+                            // a character or two right of its lyric column.
+                            val charted = seg.chords.map { x0 + it.first * charWidth }
+                            val widths = seg.chords.map { chordPaint.measureText(it.second) }
+                            val xs = resolveChordXs(charted, widths, x0, PAGE_WIDTH - MARGIN_RIGHT.toFloat())
+                            for (entry in seg.chords.withIndex()) {
+                                val i = entry.index
+                                val name = entry.value.second
+                                val x = xs[i]
+                                canvas.drawText(name, x, sy + style.chordBaseline, chordPaint)
+                                // Same box the tap target uses: half a character of
+                                // slack around the glyphs so a near miss still hits.
+                                chordHits.add(
+                                    ChordHit(
+                                        page = pageNum,
+                                        name = name,
+                                        left = x - charWidth / 2f,
+                                        top = sy,
+                                        right = x + widths[i] + charWidth / 2f,
+                                        bottom = sy + style.chordRowHeight
+                                    )
                                 )
-                            )
+                            }
                         }
                         if (seg.lyric.isNotEmpty()) {
                             canvas.drawText(seg.lyric, x0, sy + style.lyricBaseline, lyricPaint)
