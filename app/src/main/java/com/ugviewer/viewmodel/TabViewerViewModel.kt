@@ -199,11 +199,25 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /** Re-renders the PDF preview with the chosen format. */
-    fun updatePdfFormat(format: PdfGenerator.PdfFormat) {
-        if (format == pdfFormat) return
+    fun updatePdfFormat(format: PdfGenerator.PdfFormat, theme: PdfGenerator.PdfTheme? = null) {
+        var changed = format != pdfFormat
         pdfFormat = format
-        tab?.takeIf { isChordType }?.let { generatePdfPreview(it) }
+        // A named layout brings its own spacing theme along.
+        if (theme != null && theme != pdfTheme) {
+            pdfTheme = theme
+            changed = true
+        }
+        if (changed) tab?.takeIf { isChordType }?.let { generatePdfPreview(it) }
     }
+
+    /** Saved studio layouts by name, shown in the format menu. */
+    fun namedLayouts(): List<String> = PdfThemeStore.namedList(getApplication())
+
+    /** The stored theme for a named layout, or null if it vanished. */
+    fun themeForNamed(name: String): PdfGenerator.PdfTheme? =
+        PdfThemeStore.load(getApplication())
+            ?.takeIf { PdfThemeStore.savedName(getApplication()) == name }
+            ?.theme
 
     /** The chord under a tap on preview page [page] at PDF-point coordinates, or null. */
     fun chordAt(page: Int, x: Float, y: Float): PdfGenerator.ChordHit? =

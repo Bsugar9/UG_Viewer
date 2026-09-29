@@ -169,7 +169,9 @@ fun TabViewerScreen(
                     format = viewModel.pdfFormat,
                     isRendering = viewModel.isRenderingPdf,
                     isSaving = viewModel.isGeneratingPdf,
-                    onSelect = { viewModel.updatePdfFormat(it) },
+                    namedLayouts = viewModel.namedLayouts(),
+                    themeForNamed = { viewModel.themeForNamed(it) },
+                    onSelect = { viewModel.updatePdfFormat(it.first, it.second) },
                     onSave = { viewModel.requestSavePdf() }
                 )
             } else {
@@ -982,7 +984,9 @@ fun PdfFontSizeBar(
     format: PdfGenerator.PdfFormat,
     isRendering: Boolean,
     isSaving: Boolean = false,
-    onSelect: (PdfGenerator.PdfFormat) -> Unit,
+    namedLayouts: List<String> = emptyList(),
+    themeForNamed: (String) -> PdfGenerator.PdfTheme? = { null },
+    onSelect: (Pair<PdfGenerator.PdfFormat, PdfGenerator.PdfTheme?>) -> Unit,
     onSave: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1009,8 +1013,8 @@ fun PdfFontSizeBar(
                 CustomSizePanel(
                     chordFontSize = custom.chordFontSize,
                     lyricFontSize = custom.lyricFontSize,
-                    onChordFontSizeChange = { onSelect(custom.copy(chordFontSize = it)) },
-                    onLyricFontSizeChange = { onSelect(custom.copy(lyricFontSize = it)) }
+                    onChordFontSizeChange = { onSelect(custom.copy(chordFontSize = it) to null) },
+                    onLyricFontSizeChange = { onSelect(custom.copy(lyricFontSize = it) to null) }
                 )
             }
 
@@ -1055,6 +1059,29 @@ fun PdfFontSizeBar(
                         expanded = expanded,
                         onDismissRequest = { expanded = false }
                     ) {
+                        // Layouts saved in the PDF Design Studio appear first,
+                        // under the names the user gave them.
+                        namedLayouts.forEach { layoutName ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = layoutName,
+                                        color = Highlight,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                onClick = {
+                                    expanded = false
+                                    onSelect(
+                                        PdfGenerator.PdfFormat.Named(layoutName) to
+                                            themeForNamed(layoutName)
+                                    )
+                                }
+                            )
+                        }
+                        if (namedLayouts.isNotEmpty()) {
+                            HorizontalDivider()
+                        }
                         PdfGenerator.PDF_FORMATS.forEach { option ->
                             val isSelected = PdfGenerator.isSameKindAs(option, format)
                             DropdownMenuItem(
@@ -1068,8 +1095,7 @@ fun PdfFontSizeBar(
                                 onClick = {
                                     expanded = false
                                     onSelect(
-                                        if (option is PdfGenerator.PdfFormat.Custom) customSizes
-                                        else option
+                                        (if (option is PdfGenerator.PdfFormat.Custom) customSizes else option) to null
                                     )
                                 }
                             )

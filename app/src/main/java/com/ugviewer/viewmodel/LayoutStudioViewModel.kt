@@ -220,6 +220,23 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
         hasSavedLayout = true
     }
 
+    /** A sensible starting name for the save prompt: "32pt · Snug" style. */
+    fun suggestedLayoutName(): String = "${chordSize.toInt()}pt/${lyricSize.toInt()}pt"
+
+    /**
+     * Saves the current knobs under [name]: set as the app-wide default AND
+     * listed in the viewer's PDF format menu under that name.
+     */
+    fun saveNamedLayout(name: String) {
+        val app = getApplication<Application>()
+        PdfThemeStore.save(app, theme, chordSize, lyricSize, name)
+        PdfThemeStore.addToNamedList(app, name)
+        hasSavedLayout = true
+    }
+
+    /** Saved layouts by name, for the viewer's format menu. */
+    fun namedLayouts(): List<String> = PdfThemeStore.namedList(getApplication())
+
     /** Throws away the saved layout; sheets return to the shipped defaults. */
     fun resetToShipped() {
         val app = getApplication<Application>()

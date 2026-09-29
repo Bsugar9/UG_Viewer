@@ -2,6 +2,10 @@ package com.ugviewer.ui.studio
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,7 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -174,32 +182,47 @@ fun LayoutStudioScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                var showNamePrompt by remember { mutableStateOf(false) }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
                         onClick = { viewModel.resetToShipped() },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             containerColor = Accent,
                             contentColor = TextPrimary
                         ),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Reset", fontWeight = FontWeight.Bold)
+                        Text("Reset", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                     }
                     Button(
-                        onClick = { viewModel.saveAsDefault() },
-                        modifier = Modifier.weight(1f),
+                        onClick = { showNamePrompt = true },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Highlight),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text(
-                            if (viewModel.hasSavedLayout) "Saved ✓" else "Save as default",
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
                     }
+                }
+
+                if (showNamePrompt) {
+                    SaveLayoutDialog(
+                        defaultName = viewModel.suggestedLayoutName(),
+                        onConfirm = { name ->
+                            viewModel.saveNamedLayout(name)
+                            showNamePrompt = false
+                        },
+                        onDismiss = { showNamePrompt = false }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -214,29 +237,139 @@ fun LayoutStudioScreen(
                         CircularProgressIndicator(color = Highlight)
                     }
                 } else {
-                    viewModel.previewPages.forEachIndexed { index, bitmap ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(8.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                        ) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Preview page ${index + 1}",
-                                modifier = Modifier.fillMaxWidth(),
-                                contentScale = ContentScale.FillWidth
-                            )
-                        }
-                    }
+                    StudioPreviewArea(
+                        pages = viewModel.previewPages
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
+}
+
+/**
+ * The zoomable preview: a slider sets the zoom, and a two-finger pinch sets
+ * it too — each updates the same state, so the slider handle moves along when
+ * the fingers do. Single-finger drags scroll; two-finger pinches zoom, caught
+ * in the initial pointer pass so they win over the scroll.
+ */
+@Composable
+private fun StudioPreviewArea(pages: List<Bitmap>) {
+    var zoom by remember { mutableFloatStateOf(1f) }
+    val vertical = rememberScrollState()
+    val horizontal = rememberScrollState()
+    // The unzoomed width of the page column, so the scrollable content width
+    // can grow exactly with zoom.
+    var pageContentWidthDp by remember { mutableStateOf(360.dp) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    Column {
+        StudioSlider(
+            label = "Preview zoom",
+            value = zoom,
+            valueText = "${(zoom * 100).toInt()}%",
+            range = 1f..4f,
+            onChange = { zoom = it }
+        )
+
+        // Measure the natural (unzoomed) content width for the panning math.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            pageContentWidthDp = with(density) { maxWidth }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(420.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .verticalScroll(vertical)
+                .horizontalScroll(horizontal)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.size >= 2) {
+                                val newZoom = (zoom * event.calculateZoom())
+                                    .coerceIn(1f, 4f)
+                                if (newZoom != zoom) {
+                                    zoom = newZoom
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }
+        ) {
+            // Zoom scales the CONTENT, and the scroll area sizes itself to the
+            // scaled content — that is what makes horizontal panning work. A
+            // graphicsLayer transform alone never widens the scrollable area,
+            // which is why the page used to feel locked.
+            Column(
+                modifier = Modifier
+                    .requiredWidth(pageContentWidthDp * zoom)
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    }
+            ) {
+                pages.forEachIndexed { index, bitmap ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(8.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                    ) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Preview page ${index + 1}",
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.FillWidth
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Asks the user what to call the layout being saved. The name becomes the
+ * entry shown in the PDF format list on the viewer screen.
+ */
+@Composable
+private fun SaveLayoutDialog(
+    defaultName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(defaultName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Name this layout", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = TextPrimary)
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim()) },
+                enabled = name.isNotBlank()
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        containerColor = Surface
+    )
 }
 
 @Composable

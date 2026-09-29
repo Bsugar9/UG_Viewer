@@ -319,6 +319,9 @@ object PdfGenerator {
         object Small : PdfFormat()
         object FitToPage : PdfFormat()
         data class Custom(val chordFontSize: Float, val lyricFontSize: Float) : PdfFormat()
+
+        /** A layout saved in the PDF Design Studio, listed under its name. */
+        data class Named(val name: String) : PdfFormat()
     }
 
     val PDF_FORMATS: List<PdfFormat> =
@@ -328,6 +331,7 @@ object PdfGenerator {
         PdfFormat.Small -> "Small"
         PdfFormat.FitToPage -> "Fit To Page"
         is PdfFormat.Custom -> "Custom"
+        is PdfFormat.Named -> format.name
     }
 
     /** Presets compare by kind only, so the menu marks Custom selected however its sizes were last set. */
@@ -370,6 +374,9 @@ object PdfGenerator {
         is PdfFormat.Custom ->
             chordFontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) to
                 lyricFontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
+        // Named layouts carry their sizes through the theme store at the
+        // call site; here they degrade to the saved default sizes.
+        is PdfFormat.Named -> DEFAULT_FONT_SIZE to DEFAULT_FONT_SIZE
     }
 
     /** Builds the document for the save flow; the caller owns and closes it. */
@@ -584,14 +591,12 @@ object PdfGenerator {
             } else {
                 // Wrap the lyric, then attach each chord to the segment that
                 // contains its original character column (relative offset kept).
-                // The wrap itself is chord-aware: if a chord's name would be
-                // split across two rendered lines by the column cut, the break
-                // is pulled back before the chord instead, so the chord and the
-                // word it sits over stay visibly together.
-                val parts = wrapKeepOffsets(lyric, maxCols)
-                val adjusted = pullBackChordStraddlingBreaks(chords, parts, maxCols)
+                // The wrap itself is chord-aware: a cut never lands inside a
+                // chord name, so when a line wraps, the chord and the word it
+                // sits over begin the next line TOGETHER.
+                val parts = wrapChordAware(lyric, maxCols, chords)
                 val chordLists = List(parts.size) { mutableListOf<Pair<Int, String>>() }
-                for ((off, name) in adjusted) {
+                for ((off, name) in chords) {
                     var idx = 0
                     for (i in parts.indices) if (off >= parts[i].first) idx = i
                     val rel = (off - parts[idx].first).coerceIn(0, (maxCols - name.length).coerceAtLeast(0))
@@ -723,76 +728,43 @@ object PdfGenerator {
     }
 
     /**
-     * Chord-aware wrapping: keeps a chord name and the word it sits over on
-     * the same rendered line.
-     *
-     * A chord placed near the column limit can end up straddling a wrap: its
-     * name would start on rendered line N and continue on line N+1, or the cut
-     * can fall inside the very word the chord is anchored to. Since a PDF has
-     * no reflow, the chord would be drawn split or detached from its word.
-     * Whenever that happens, the break is pulled back to just before the
-     * chord's column; the earlier words ride down to the next line with it.
-     *
-     * Returns the chords with their columns adjusted to the new layout.
+     * Word wrap that respects chord names: identical to [wrapKeepOffsets],
+     * but a cut that would land inside a chord name is moved back to the
+     * space before that chord, so the chord and the word it sits over begin
+     * the next line together instead of the chord being split or left on the
+     * previous line when its word wraps.
      */
-    internal fun pullBackChordStraddlingBreaks(
-        chords: List<Pair<Int, String>>,
-        parts: List<Pair<Int, String>>,
-        maxCols: Int
+    internal fun wrapChordAware(
+        text: String,
+        maxCols: Int,
+        chords: List<Pair<Int, String>>
     ): List<Pair<Int, String>> {
-        if (parts.size < 2 || chords.isEmpty()) return chords
-        val adjusted = chords.toMutableList()
-        // Walk the breaks left to right; each pull-back reflows the segments
-        // that follow, so the break positions are recomputed after each move.
-        var changed = true
-        var guard = 0
-        while (changed && guard++ < 10) {
-            changed = false
-            for (b in 0 until parts.size - 1) {
-                val nextStart = parts[b + 1].first
-                // The chord that would straddle this break: the last one
-                // starting before the cut whose name would not fit whole.
-                val straddler = adjusted.lastOrNull { (off, name) ->
-                    off < nextStart && off + name.length > nextStart
-                } ?: continue
-                // Re-flow: everything from the straddler on moves down, and
-                // words pack from there as the segments allow.
-                val moved = reflowFrom(adjusted, parts, b, straddler.first, maxCols)
-                if (moved != adjusted) {
-                    adjusted.clear(); adjusted.addAll(moved)
-                    changed = true
+        val result = mutableListOf<Pair<Int, String>>()
+        if (text.isEmpty()) return result
+        if (text.length <= maxCols) {
+            result.add(0 to text)
+            return result
+        }
+        var start = 0
+        while (start < text.length) {
+            val end = minOf(start + maxCols, text.length)
+            var cut = end
+            if (end < text.length) {
+                val lastSpace = text.lastIndexOf(' ', end - 1)
+                if (lastSpace > start) cut = lastSpace
+                // Chord-aware adjustment: never cut through a chord name.
+                for ((off, name) in chords) {
+                    if (cut > off && cut < off + name.length) {
+                        val spaceBefore = text.lastIndexOf(' ', off - 1)
+                        if (spaceBefore > start) cut = spaceBefore
+                        break
+                    }
                 }
             }
+            result.add(start to text.substring(start, cut))
+            start = if (cut < text.length && text[cut] == ' ') cut + 1 else cut
         }
-        return adjusted
-    }
-
-    /**
-     * Moves every chord from [fromColumn] on down to the first position the
-     * reflowed layout gives it: the earliest column of the next line's word
-     * content, preserving each chord's offset within its own line's tail.
-     */
-    private fun reflowFrom(
-        chords: List<Pair<Int, String>>,
-        parts: List<Pair<Int, String>>,
-        breakIndex: Int,
-        fromColumn: Int,
-        maxCols: Int
-    ): List<Pair<Int, String>> {
-        val out = chords.toMutableList()
-        val tail = out.filter { it.first >= fromColumn }
-        if (tail.isEmpty()) return out
-        out.removeAll { it.first >= fromColumn }
-        // First moved chord anchors at the start of the segment after the
-        // break; the rest keep their spacing relative to it, clamped so a
-        // chord never runs past its segment's columns.
-        val anchor = parts.getOrNull(breakIndex + 1)?.first ?: fromColumn
-        val base = tail.first().first
-        for ((off, name) in tail) {
-            val target = (anchor + (off - base)).coerceAtMost((maxCols - name.length).coerceAtLeast(0))
-            out.add(target to name)
-        }
-        return out.sortedBy { it.first }
+        return result
     }
 
     private fun drawHeader(canvas: Canvas, tab: TabResult, youtubeUrl: String?, metrics: PdfStyle): Float {

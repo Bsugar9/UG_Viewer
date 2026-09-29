@@ -6,8 +6,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val versionCodeValue: Int = 251
-val versionNameValue: String = "2.51"
+val versionCodeValue: Int = 252
+val versionNameValue: String = "2.52"
 
 // Release signing secrets are never committed. They are read from
 // keystore.properties (git-ignored) and fall back to environment variables, so a

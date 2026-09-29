@@ -42,9 +42,16 @@ object PdfThemeStore {
         }
     }
 
-    fun save(context: Context, theme: PdfGenerator.PdfTheme, chordSize: Float, lyricSize: Float) {
+    fun save(
+        context: Context,
+        theme: PdfGenerator.PdfTheme,
+        chordSize: Float,
+        lyricSize: Float,
+        name: String = "Default"
+    ) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
             putBoolean(KEY_SAVED, true)
+            putString(KEY_NAME, name)
             putFloat(KEY_CHORD_PITCH, theme.chordLinePitch)
             putFloat(KEY_PLAIN_ROW, theme.plainRowHeight)
             putFloat(KEY_STANZA_GAP, theme.stanzaGap)
@@ -54,6 +61,34 @@ object PdfThemeStore {
             apply()
         }
     }
+
+    /** The name the saved layout was stored under, or null. */
+    fun savedName(context: Context): String? {
+        val saved = load(context) ?: return null
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_NAME, null)
+    }
+
+    /** Adds [name] to the list shown in the viewer's PDF format menu. */
+    fun addToNamedList(context: Context, name: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val updated = (namedList(context) - name) + name
+        prefs.edit().putString(KEY_NAMED_LIST, com.google.gson.Gson().toJson(updated)).apply()
+    }
+
+    /** Saved layout names, oldest first. */
+    fun namedList(context: Context): List<String> {
+        return try {
+            val json = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_NAMED_LIST, null) ?: return emptyList()
+            com.google.gson.Gson().fromJson(json, Array<String>::class.java).toList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private const val KEY_NAME = "name"
+    private const val KEY_NAMED_LIST = "named_layouts"
 
     /** Removes the saved layout; sheets go back to the shipped defaults. */
     fun clear(context: Context) {
