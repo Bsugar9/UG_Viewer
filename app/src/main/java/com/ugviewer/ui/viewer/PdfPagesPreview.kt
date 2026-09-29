@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -18,13 +18,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -33,10 +33,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 const val MIN_PDF_SCALE = 1f
 const val MAX_PDF_SCALE = 4f
@@ -70,22 +68,23 @@ fun PdfPagesPreview(
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
 
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        val newScale = (scale * zoomChange).coerceIn(MIN_PDF_SCALE, MAX_PDF_SCALE)
-        scale = newScale
-        // Panning is only meaningful once zoomed in; clamp it so the pages can
-        // never be dragged out of the viewport.
-        offset = if (newScale <= MIN_PDF_SCALE) {
-            Offset.Zero
-        } else {
-            clampPan(offset + panChange, viewport, newScale)
-        }
-    }
-
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it }
+            .pointerInput(Unit) {
+                detectTransformGestures(
+                    onGesture = { _, pan, zoom, _ ->
+                        val newScale = (scale * zoom).coerceIn(MIN_PDF_SCALE, MAX_PDF_SCALE)
+                        scale = newScale
+                        offset = if (newScale <= MIN_PDF_SCALE) {
+                            Offset.Zero
+                        } else {
+                            clampPan(offset + pan, viewport, newScale)
+                        }
+                    }
+                )
+            }
     ) {
         Column(
             modifier = Modifier
@@ -96,11 +95,7 @@ fun PdfPagesPreview(
                     translationX = offset.x,
                     translationY = offset.y
                 )
-                // verticalScroll is declared first so it is the inner-most
-                // pointer handler: one-finger drags scroll at 1x, and once
-                // zoomed in transformable takes over the drag to pan instead.
                 .verticalScroll(scrollState)
-                .transformable(state = transformState, canPan = { scale > MIN_PDF_SCALE })
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onDoubleTap = {
@@ -110,6 +105,7 @@ fun PdfPagesPreview(
                     )
                 }
                 .padding(horizontal = 8.dp)
+                .align(Alignment.TopCenter)
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -126,25 +122,14 @@ fun PdfPagesPreview(
                     shape = RoundedCornerShape(8.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
-                    Column {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "PDF Page ${index + 1}",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
-                            contentScale = ContentScale.Fit
-                        )
-                        Text(
-                            text = "Page ${index + 1}",
-                            fontSize = 10.sp,
-                            color = Color.Gray,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp),
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "PDF Page ${index + 1}",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
+                        contentScale = ContentScale.Fit
+                    )
                 }
             }
 
