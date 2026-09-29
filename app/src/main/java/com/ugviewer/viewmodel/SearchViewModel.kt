@@ -122,6 +122,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val KEY_HISTORY = "entries"
-        private const val MAX_HISTORY = 10
+        private const val MAX_HISTORY = 25
     }
 }
