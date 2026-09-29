@@ -19,6 +19,27 @@ class PdfLayoutTest {
     private val realisticMaxCols = listOf(19, 20, 22, 25, 28)
 
     @Test
+    fun `a chord straddling a wrap is pulled back to the next line`() {
+        // "Gm7" starts at column 18 and would run to 21: the 20-column cut
+        // splits the name across rendered lines. The pull-back must move it
+        // (with its word) to the next line whole.
+        val content = "[ch]C[/ch]" + " ".repeat(17) + "[ch]Gm7[/ch]" +
+            "\n" + "aaaa bbbb cccc dddd eeee fff gggg hhhh"
+        val rows = PdfGenerator.buildRows(content, maxCols = 20)
+        val segments = rows.filterIsInstance<PdfGenerator.PdfRow.ChordLyric>().first().segments
+        val allChords = segments.flatMap { it.chords }
+        val gm7 = allChords.first { it.second == "Gm7" }
+        val segIndex = segments.indexOfFirst { it.chords.any { (_, n) -> n == "Gm7" } }
+        // The name fits inside its segment: start + length <= maxCols.
+        assertTrue(
+            "Gm7 at ${gm7.first} in segment $segIndex does not fit (maxCols=20)",
+            gm7.first + 3 <= 20
+        )
+        // And the word it sits over came down with it (segment is not empty).
+        assertTrue(segments[segIndex].lyric.isNotBlank())
+    }
+
+    @Test
     fun `wrapped lyric segments never exceed the column limit`() {
         val lyric = "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm"
         for (maxCols in realisticMaxCols) {
@@ -109,6 +130,6 @@ class PdfLayoutTest {
             assertTrue("font size $size out of range", size in PdfGenerator.MIN_FONT_SIZE..PdfGenerator.MAX_FONT_SIZE)
         }
         assertTrue(PdfGenerator.FONT_SIZE_OPTIONS.contains(PdfGenerator.DEFAULT_FONT_SIZE))
-        assertEquals(14, PdfGenerator.FONT_SIZE_OPTIONS.size)
+        assertEquals(21, PdfGenerator.FONT_SIZE_OPTIONS.size)
     }
 }

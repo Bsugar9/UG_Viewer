@@ -16,6 +16,7 @@ import com.ugviewer.api.UGApiClient
 import com.ugviewer.chord.ChordLibrary
 import com.ugviewer.chord.ChordShapePdfGenerator
 import com.ugviewer.util.PdfGenerator
+import com.ugviewer.util.PdfThemeStore
 import com.ugviewer.util.YouTubeHelper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,10 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** Body sizes for the preview and for saving; Custom carries the two dials. */
     var pdfFormat by mutableStateOf<PdfGenerator.PdfFormat>(PdfGenerator.PdfFormat.FitToPage)
+
+    /** Spacing theme for the generated sheet; starts from the saved layout. */
+    var pdfTheme by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT)
+        private set
 
     /** Human-readable name of the folder PDFs are saved into. */
     var pdfSaveFolder by mutableStateOf<String?>(null)
@@ -90,6 +95,17 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var renderJob: Job? = null
     private var saveTreeUri: Uri? = null
+
+    init {
+        // A layout saved in the Studio is how sheets look from now on: sizes
+        // become the Custom dials' starting point, spacing comes with them.
+        PdfThemeStore.load(getApplication())?.let { saved ->
+            pdfTheme = saved.theme
+            (pdfFormat as? PdfGenerator.PdfFormat.Custom)?.let { custom ->
+                pdfFormat = custom.copy(chordFontSize = saved.chordSize, lyricFontSize = saved.lyricSize)
+            }
+        }
+    }
 
     companion object {
         /** Matches the chord search screen's raster scale, so the pictures look the same. */
@@ -164,7 +180,7 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
                 val format = pdfFormat
                 var hitMap = PdfGenerator.ChordHitMap.EMPTY
                 val bytes = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdfToBytes(tabResult, link, format) { hitMap = it }
+                    PdfGenerator.generatePdfToBytes(tabResult, link, format, pdfTheme) { hitMap = it }
                 }
                 pdfBytes = bytes
                 val pages = withContext(Dispatchers.IO) { renderPdfPages(bytes) }
@@ -334,7 +350,7 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val result = withContext(Dispatchers.IO) {
                     runCatching {
-                        val document = PdfGenerator.buildDocumentForSave(currentTab, link, pdfFormat)
+                        val document = PdfGenerator.buildDocumentForSave(currentTab, link, pdfFormat, pdfTheme)
                         try {
                             PdfGenerator.saveToFolder(context, document, fileName, treeUri)
                         } finally {
@@ -374,7 +390,7 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
                 if (youtubeUrl == null) youtubeUrl = link
 
                 val file = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdf(context, currentTab, link, pdfFormat)
+                    PdfGenerator.generatePdf(context, currentTab, link, pdfFormat, pdfTheme)
                 }
                 pdfSuccess = "Saved to Downloads/UG Viewer/${file.name}"
             } catch (e: Exception) {

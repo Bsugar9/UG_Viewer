@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,6 +53,7 @@ import com.ugviewer.viewmodel.SearchViewModel
 fun SearchScreen(
     onTabSelected: (Long) -> Unit,
     onChordShapesSelected: () -> Unit,
+    onDesignStudioSelected: () -> Unit = {},
     viewModel: SearchViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -149,13 +151,12 @@ fun SearchScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.Bottom) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "UG Viewer",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Highlight,
-                        modifier = Modifier.alignByBaseline()
+                        color = Highlight
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
@@ -164,9 +165,27 @@ fun SearchScreen(
                         text = "- v${BuildConfig.VERSION_NAME}",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Highlight.copy(alpha = 0.7f),
-                        modifier = Modifier.alignByBaseline()
+                        color = Highlight.copy(alpha = 0.7f)
                     )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    // PDF Design Studio lives here rather than in a full-width
+                    // button: design tools are used rarely, and the home screen
+                    // is better spent showing artists and songs.
+                    IconButton(
+                        onClick = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            onDesignStudioSelected()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "PDF Design Studio",
+                            tint = Highlight.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
                 Image(
                     painter = painterResource(id = R.mipmap.ic_launcher),
@@ -281,6 +300,8 @@ fun SearchScreen(
             ) {
                 Text("Chord Shape Search", fontWeight = FontWeight.Bold)
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             Spacer(modifier = Modifier.height(16.dp))
 

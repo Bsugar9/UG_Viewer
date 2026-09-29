@@ -8,10 +8,14 @@ import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaf
 import androidx.compose.runtime.*
 import com.ugviewer.ui.chord.ChordSearchScreen
 import com.ugviewer.ui.search.SearchScreen
+import com.ugviewer.ui.studio.LayoutStudioScreen
 import com.ugviewer.ui.viewer.TabViewerScreen
 
 /** Sentinel destination for the chord-shape screen (tab ids are always positive). */
 private const val CHORD_SHAPES_DESTINATION = -1L
+
+/** Sentinel destination for the Layout Studio (below the chord-shapes sentinel). */
+private const val LAYOUT_STUDIO_DESTINATION = -2L
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
@@ -32,6 +36,9 @@ fun AdaptiveMainScreen() {
                 },
                 onChordShapesSelected = {
                     navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, CHORD_SHAPES_DESTINATION)
+                },
+                onDesignStudioSelected = {
+                    navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, LAYOUT_STUDIO_DESTINATION)
                 }
             )
         },
@@ -39,6 +46,12 @@ fun AdaptiveMainScreen() {
             val content = navigator.currentDestination?.content
             if (content == CHORD_SHAPES_DESTINATION) {
                 ChordSearchScreen(
+                    onBack = {
+                        navigator.navigateBack()
+                    }
+                )
+            } else if (content == LAYOUT_STUDIO_DESTINATION) {
+                LayoutStudioScreen(
                     onBack = {
                         navigator.navigateBack()
                     }

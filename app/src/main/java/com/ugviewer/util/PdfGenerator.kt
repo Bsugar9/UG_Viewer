@@ -20,28 +20,26 @@ object PdfGenerator {
 
     const val PAGE_WIDTH = 595   // A4 at 72 DPI
     const val PAGE_HEIGHT = 842
-    private const val MARGIN_LEFT = 50
     private const val MARGIN_RIGHT = 50
-    private const val MARGIN_TOP = 50
-    private const val MARGIN_BOTTOM = 50
+
+    /** Page margins; visible to the Studio so it can draw the wrap guide. */
+    const val MARGIN_LEFT = 50
+    const val MARGIN_TOP = 50
+    const val MARGIN_BOTTOM = 50
 
     // Chords and lyrics share one monospace grid: a chord drawn at column N
-    // sits exactly above lyric column N, even after wrapping. The chord band is
-    // deliberately tight so a chord hugs the lyric line it belongs to.
-    private const val CHORD_BASELINE = 8.5f
-    private const val LYRIC_BASELINE = 17f
-    private const val CHORD_ROW_HEIGHT = 22f
-    private const val PLAIN_ROW_HEIGHT = 12f
-    private const val GAP_HEIGHT = 6f
+    // sits exactly above lyric column N, even after wrapping. The vertical
+    // rhythm comes from [PdfTheme] so the chord placement can be tuned
+    // without touching the layout code.
     private const val BASE_FONT_SIZE = 10f
 
     // Header/footer text is fixed and small: it exists only for context and must
     // never scale with the body font, which would steal lines from the tab.
     private const val HEADER_FONT_SIZE = 8f
 
-    val FONT_SIZE_OPTIONS = (29..42).map { it.toFloat() }
+    val FONT_SIZE_OPTIONS = (22..42).map { it.toFloat() }
     const val DEFAULT_FONT_SIZE = 32f
-    const val MIN_FONT_SIZE = 29f
+    const val MIN_FONT_SIZE = 22f
     const val MAX_FONT_SIZE = 42f
 
     // Custom dial defaults: where the two sizes start the first time Custom is
@@ -70,10 +68,44 @@ object PdfGenerator {
         return value.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
 
+    /** Room left under a lyric baseline for descenders (g, y, p) — not a knob. */
+    private const val DESCENDER = 0.35f
+
     /**
-     * Every draw metric is derived from the body font sizes. Chords and lyrics
-     * share one monospace grid, so their advance widths still match and a chord
-     * stays exactly above its lyric column at any size pair.
+     * The visual rhythm of a chord sheet, in multiples of the 10pt base size.
+     *
+     * [gapAboveChord] is the distance from the previous lyric line's baseline
+     * down to the chord's baseline; [gapBelowChord] from the chord's baseline
+     * to its own lyric's baseline. Setting the two EQUAL centers the chord
+     * vertically between the lyric lines; a small [gapBelowChord] hugs the
+     * chord onto the word it belongs to.
+     *
+     * [plainRowHeight] governs lyric-only lines and [stanzaGap] the blank-line
+     * spacing between sections. [wrapFraction] decides how much of the page
+     * width a line may use before wrapping: 1.0 fills the margins, 0.6 wraps
+     * at roughly 60% of the columns, giving short, easy-to-follow lines. The
+     * chord-over-its-word guarantee holds at every setting.
+     */
+    data class PdfTheme(
+        val gapAboveChord: Float = 0.5f,
+        val gapBelowChord: Float = 0.5f,
+        val plainRowHeight: Float = 1.2f,
+        val stanzaGap: Float = 0.6f,
+        val wrapFraction: Float = 1.0f
+    ) {
+        companion object {
+            /** The shipped default: chords centred between the lyric lines. */
+            val DEFAULT = PdfTheme()
+
+            /** The original roomier layout, kept for comparison. */
+            val LOOSE = PdfTheme(gapAboveChord = 1.0f, gapBelowChord = 0.85f)
+        }
+    }
+
+    /**
+     * Every draw metric is derived from the body font sizes and the theme.
+     * Chords and lyrics share one monospace grid, so their advance widths
+     * still match and a chord stays exactly above its lyric column.
      */
     private data class PdfStyle(
         val chordFontSize: Float,
@@ -92,17 +124,26 @@ object PdfGenerator {
         val badgeHeight: Float
     ) {
         companion object {
-            fun forFontSizes(chordSize: Float, lyricSize: Float): PdfStyle {
+            fun forFontSizes(chordSize: Float, lyricSize: Float, theme: PdfTheme): PdfStyle {
                 val kc = chordSize / BASE_FONT_SIZE
                 val kl = lyricSize / BASE_FONT_SIZE
+                // gapAboveChord is measured from the previous lyric BASELINE,
+                // so equal slider values put the chord exactly halfway between
+                // the two lyric lines; the descender allowance is folded into
+                // that measurement (hence the subtraction here).
+                val chordBaseline =
+                    ((theme.gapAboveChord - DESCENDER) * BASE_FONT_SIZE * maxOf(kc, kl))
+                        .coerceAtLeast(0.15f * BASE_FONT_SIZE * maxOf(kc, kl))
+                val lyricBaseline = chordBaseline + theme.gapBelowChord * BASE_FONT_SIZE * kl
                 return PdfStyle(
                     chordFontSize = chordSize,
                     lyricFontSize = lyricSize,
-                    chordBaseline = CHORD_BASELINE * kc,
-                    lyricBaseline = LYRIC_BASELINE * kl,
-                    chordRowHeight = CHORD_ROW_HEIGHT * maxOf(kc, kl),
-                    plainRowHeight = PLAIN_ROW_HEIGHT * kl,
-                    gapHeight = GAP_HEIGHT * kl,
+                    chordBaseline = chordBaseline,
+                    lyricBaseline = lyricBaseline,
+                    chordRowHeight = theme.gapAboveChord * BASE_FONT_SIZE * maxOf(kc, kl) +
+                        theme.gapBelowChord * BASE_FONT_SIZE * kl,
+                    plainRowHeight = theme.plainRowHeight * BASE_FONT_SIZE * kl,
+                    gapHeight = theme.stanzaGap * BASE_FONT_SIZE * kl,
                     // Header/footer metrics are fixed (not scaled) so a large
                     // body font cannot inflate the header and consume the page.
                     titleSize = HEADER_FONT_SIZE,
@@ -180,8 +221,14 @@ object PdfGenerator {
 
     internal sealed class PdfRow {
         class ChordLyric(val segments: List<ChordSeg>) : PdfRow()
-        class Plain(val text: String) : PdfRow()
-        class Gap(val height: Float = GAP_HEIGHT) : PdfRow()
+
+        /**
+         * A lyric-only line. Every lyric line reserves the chord band above it
+         * ("a gap where a chord should be placed"), wrapped continuations
+         * included; [isTabLine] marks [tab]-block rows, which stay tight.
+         */
+        class Plain(val text: String, val isTabLine: Boolean = false) : PdfRow()
+        class Gap(val height: Float) : PdfRow()
     }
 
     /** Where a drawn chord name lives on its page, in PDF points. */
@@ -231,9 +278,10 @@ object PdfGenerator {
         context: Context,
         tab: TabResult,
         youtubeUrl: String? = null,
-        format: PdfFormat = PdfFormat.FitToPage
+        format: PdfFormat = PdfFormat.FitToPage,
+        theme: PdfTheme = PdfTheme.DEFAULT
     ): File {
-        val document = buildPdfDocument(tab, youtubeUrl, format)
+        val document = buildPdfDocument(tab, youtubeUrl, format, theme)
         val fileName = sanitizeFileName("${tab.artistName} - ${tab.songName}.pdf")
         val file = saveToDownloads(context, document, fileName)
         document.close()
@@ -244,9 +292,10 @@ object PdfGenerator {
         tab: TabResult,
         youtubeUrl: String? = null,
         format: PdfFormat = PdfFormat.FitToPage,
+        theme: PdfTheme = PdfTheme.DEFAULT,
         hitMapOut: (ChordHitMap) -> Unit = {}
     ): ByteArray {
-        val document = buildPdfDocument(tab, youtubeUrl, format, hitMapOut)
+        val document = buildPdfDocument(tab, youtubeUrl, format, theme, hitMapOut)
         val outputStream = ByteArrayOutputStream()
         document.writeTo(outputStream)
         document.close()
@@ -265,20 +314,22 @@ object PdfGenerator {
     fun buildDocumentForSave(
         tab: TabResult,
         youtubeUrl: String?,
-        format: PdfFormat
-    ): PdfDocument = buildPdfDocument(tab, youtubeUrl, format)
+        format: PdfFormat,
+        theme: PdfTheme = PdfTheme.DEFAULT
+    ): PdfDocument = buildPdfDocument(tab, youtubeUrl, format, theme)
 
     private fun buildPdfDocument(
         tab: TabResult,
         youtubeUrl: String?,
         format: PdfFormat,
+        theme: PdfTheme,
         hitMapOut: (ChordHitMap) -> Unit = {}
     ): PdfDocument {
         val document = PdfDocument()
         val (chordSize, lyricSize) = format.bodyFontSizes()
         // Chords and lyrics each get their own style; the shared monospace grid
         // below is what still keeps a chord above its lyric column.
-        val style = PdfStyle.forFontSizes(chordSize, lyricSize)
+        val style = PdfStyle.forFontSizes(chordSize, lyricSize, theme)
 
         // Same monospace size for chords and lyrics so advance widths match.
         val lyricPaint = Paint().apply {
@@ -300,9 +351,11 @@ object PdfGenerator {
         val usableWidth = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
         // Trust the measured advance width: at 42pt monospace a whole page is only
         // ~22 columns, and a hard floor would push text past the right margin.
-        val maxCols = (usableWidth / charWidth).toInt().coerceAtLeast(1)
+        // The theme's wrap fraction narrows that further: 0.6 wraps at ~60% of
+        // the columns for short, easy-to-follow lines.
+        val maxCols = ((usableWidth / charWidth) * theme.wrapFraction).toInt().coerceAtLeast(1)
 
-        val rows = buildRows(tab.content, maxCols)
+        val rows = buildRows(tab.content, maxCols, theme)
 
         var pageNum = 1
         var page = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNum).create())
@@ -318,7 +371,10 @@ object PdfGenerator {
         for (row in rows) {
             val h = when (row) {
                 is PdfRow.ChordLyric -> style.chordRowHeight * row.segments.size
-                is PdfRow.Plain -> style.plainRowHeight
+                // Lyric lines carry the same band as chorded lines, so a
+                // pencil-in chord has somewhere to live everywhere; tab rows
+                // stay at their own tight height.
+                is PdfRow.Plain -> if (row.isTabLine) style.plainRowHeight else style.chordRowHeight
                 is PdfRow.Gap -> row.height * (style.lyricFontSize / BASE_FONT_SIZE)
             }
             if (rowsOnPage > 0 && y + h > pageLimit) {
@@ -357,7 +413,15 @@ object PdfGenerator {
                         sy += style.chordRowHeight
                     }
                 }
-                is PdfRow.Plain -> canvas.drawText(row.text, MARGIN_LEFT.toFloat(), y + style.plainRowHeight, lyricPaint)
+                is PdfRow.Plain -> {
+                    if (row.isTabLine) {
+                        canvas.drawText(row.text, MARGIN_LEFT.toFloat(), y + style.plainRowHeight, lyricPaint)
+                    } else {
+                        // Same baseline a chorded line's lyric uses, so lyric
+                        // text lines up across the whole sheet.
+                        canvas.drawText(row.text, MARGIN_LEFT.toFloat(), y + style.lyricBaseline, lyricPaint)
+                    }
+                }
                 is PdfRow.Gap -> Unit
             }
             y += h
@@ -375,12 +439,12 @@ object PdfGenerator {
      * no other text) is paired with the following lyric line; inline tags such
      * as "some [ch]Am[/ch] words" become a chord at that exact column.
      */
-    internal fun buildRows(content: String, maxCols: Int): List<PdfRow> {
+    internal fun buildRows(content: String, maxCols: Int, theme: PdfTheme = PdfTheme.DEFAULT): List<PdfRow> {
         val rows = mutableListOf<PdfRow>()
         var pendingChords: List<Pair<Int, String>>? = null
         var inTabBlock = false
 
-        fun addPlain(text: String) {
+        fun addPlain(text: String, isTabLine: Boolean = false) {
             val scrubbed = anyTagRegex.replace(text, "")
             if (scrubbed.isBlank()) return
             val trimmed = scrubbed.trimEnd()
@@ -391,7 +455,7 @@ object PdfGenerator {
             // (e.g. "C  G  Am" or "Intro: C G Am"); lyrics with an occasional
             // chord-like word stay plain text.
             if (chordCount == 0 || lyricWords >= chordCount) {
-                for ((_, seg) in wrapKeepOffsets(trimmed, maxCols)) rows.add(PdfRow.Plain(seg))
+                for ((_, seg) in wrapKeepOffsets(trimmed, maxCols)) rows.add(PdfRow.Plain(seg, isTabLine = inTabBlock))
                 return
             }
             val parts = wrapKeepOffsets(trimmed, maxCols)
@@ -443,9 +507,14 @@ object PdfGenerator {
             } else {
                 // Wrap the lyric, then attach each chord to the segment that
                 // contains its original character column (relative offset kept).
+                // The wrap itself is chord-aware: if a chord's name would be
+                // split across two rendered lines by the column cut, the break
+                // is pulled back before the chord instead, so the chord and the
+                // word it sits over stay visibly together.
                 val parts = wrapKeepOffsets(lyric, maxCols)
+                val adjusted = pullBackChordStraddlingBreaks(chords, parts, maxCols)
                 val chordLists = List(parts.size) { mutableListOf<Pair<Int, String>>() }
-                for ((off, name) in chords) {
+                for ((off, name) in adjusted) {
                     var idx = 0
                     for (i in parts.indices) if (off >= parts[i].first) idx = i
                     val rel = (off - parts[idx].first).coerceIn(0, (maxCols - name.length).coerceAtLeast(0))
@@ -462,17 +531,17 @@ object PdfGenerator {
             when {
                 lower.contains("[/tab]") -> {
                     val idx = lower.indexOf("[/tab]")
-                    if (idx > 0) addPlain(line.substring(0, idx))
+                    if (idx > 0) addPlain(line.substring(0, idx), isTabLine = true)
                     val tail = line.substring(idx + 6)
                     if (tail.isNotBlank()) addPlain(tail)
                     inTabBlock = false
                 }
                 lower.contains("[tab]") -> {
                     val idx = lower.indexOf("[tab]") + 5
-                    if (idx < line.length) addPlain(line.substring(idx))
+                    if (idx < line.length) addPlain(line.substring(idx), isTabLine = true)
                     inTabBlock = true
                 }
-                inTabBlock -> addPlain(line)
+                inTabBlock -> addPlain(line, isTabLine = true)
                 lower.contains("[ch]") || lower.contains("[/ch]") -> {
                     // Robust tag handling: paired [ch]X[/ch] contribute chord
                     // names at their exact mapped column; ANY leftover tag
@@ -515,7 +584,7 @@ object PdfGenerator {
                     // Text outside chord tags decides "chord-only line" status.
                     val outsideText = anyTagRegex.replace(chPairRegex.replace(line, ""), "")
                     when {
-                        inline.isEmpty() -> addPlain(residual)
+                        inline.isEmpty() -> addPlain(residual, isTabLine = inTabBlock)
                         outsideText.isBlank() -> pendingChords = inline
                         else -> {
                             // Mixed chord+lyric line: blank out the chord names
@@ -538,13 +607,13 @@ object PdfGenerator {
                 line.isBlank() -> {
                     pendingChords?.let { addChordLyric(it, "") }
                     pendingChords = null
-                    rows.add(PdfRow.Gap())
+                    rows.add(PdfRow.Gap(theme.stanzaGap * BASE_FONT_SIZE))
                 }
                 pendingChords != null -> {
                     addChordLyric(pendingChords!!, line.trimEnd())
                     pendingChords = null
                 }
-                else -> addPlain(line)
+                else -> addPlain(line, isTabLine = inTabBlock)
             }
         }
         pendingChords?.let { addChordLyric(it, "") }
@@ -574,6 +643,79 @@ object PdfGenerator {
             start = if (cut < text.length && text[cut] == ' ') cut + 1 else cut
         }
         return result
+    }
+
+    /**
+     * Chord-aware wrapping: keeps a chord name and the word it sits over on
+     * the same rendered line.
+     *
+     * A chord placed near the column limit can end up straddling a wrap: its
+     * name would start on rendered line N and continue on line N+1, or the cut
+     * can fall inside the very word the chord is anchored to. Since a PDF has
+     * no reflow, the chord would be drawn split or detached from its word.
+     * Whenever that happens, the break is pulled back to just before the
+     * chord's column; the earlier words ride down to the next line with it.
+     *
+     * Returns the chords with their columns adjusted to the new layout.
+     */
+    internal fun pullBackChordStraddlingBreaks(
+        chords: List<Pair<Int, String>>,
+        parts: List<Pair<Int, String>>,
+        maxCols: Int
+    ): List<Pair<Int, String>> {
+        if (parts.size < 2 || chords.isEmpty()) return chords
+        val adjusted = chords.toMutableList()
+        // Walk the breaks left to right; each pull-back reflows the segments
+        // that follow, so the break positions are recomputed after each move.
+        var changed = true
+        var guard = 0
+        while (changed && guard++ < 10) {
+            changed = false
+            for (b in 0 until parts.size - 1) {
+                val nextStart = parts[b + 1].first
+                // The chord that would straddle this break: the last one
+                // starting before the cut whose name would not fit whole.
+                val straddler = adjusted.lastOrNull { (off, name) ->
+                    off < nextStart && off + name.length > nextStart
+                } ?: continue
+                // Re-flow: everything from the straddler on moves down, and
+                // words pack from there as the segments allow.
+                val moved = reflowFrom(adjusted, parts, b, straddler.first, maxCols)
+                if (moved != adjusted) {
+                    adjusted.clear(); adjusted.addAll(moved)
+                    changed = true
+                }
+            }
+        }
+        return adjusted
+    }
+
+    /**
+     * Moves every chord from [fromColumn] on down to the first position the
+     * reflowed layout gives it: the earliest column of the next line's word
+     * content, preserving each chord's offset within its own line's tail.
+     */
+    private fun reflowFrom(
+        chords: List<Pair<Int, String>>,
+        parts: List<Pair<Int, String>>,
+        breakIndex: Int,
+        fromColumn: Int,
+        maxCols: Int
+    ): List<Pair<Int, String>> {
+        val out = chords.toMutableList()
+        val tail = out.filter { it.first >= fromColumn }
+        if (tail.isEmpty()) return out
+        out.removeAll { it.first >= fromColumn }
+        // First moved chord anchors at the start of the segment after the
+        // break; the rest keep their spacing relative to it, clamped so a
+        // chord never runs past its segment's columns.
+        val anchor = parts.getOrNull(breakIndex + 1)?.first ?: fromColumn
+        val base = tail.first().first
+        for ((off, name) in tail) {
+            val target = (anchor + (off - base)).coerceAtMost((maxCols - name.length).coerceAtLeast(0))
+            out.add(target to name)
+        }
+        return out.sortedBy { it.first }
     }
 
     private fun drawHeader(canvas: Canvas, tab: TabResult, youtubeUrl: String?, metrics: PdfStyle): Float {
