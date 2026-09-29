@@ -1,17 +1,20 @@
 package com.ugviewer.viewmodel
 
+import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ugviewer.api.TabResult
 import com.ugviewer.api.UGApiClient
+import com.ugviewer.chord.ChordLibrary
+import com.ugviewer.chord.ChordShapePdfGenerator
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.util.YouTubeHelper
 import kotlinx.coroutines.CancellationException
@@ -22,14 +25,17 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-class TabViewerViewModel : ViewModel() {
+class TabViewerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val api = UGApiClient()
+
+    /** The chords-db library behind the Chord Shape Search screen; same source for the popup. */
+    private val chordBook = ChordLibrary.get(application)
 
     var tab by mutableStateOf<TabResult?>(null)
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
-    var fontSize by mutableFloatStateOf(14f)
+    var fontSize by mutableStateOf(14f)
     var isGeneratingPdf by mutableStateOf(false)
     var pdfSuccess by mutableStateOf<String?>(null)
     var isFetchingYouTube by mutableStateOf(false)
@@ -38,9 +44,57 @@ class TabViewerViewModel : ViewModel() {
     var isChordType by mutableStateOf(false)
     var pdfPages by mutableStateOf<List<Bitmap>>(emptyList())
     var isRenderingPdf by mutableStateOf(false)
-    var pdfFontSize by mutableFloatStateOf(PdfGenerator.DEFAULT_FONT_SIZE)
+
+    /** Body sizes for the preview and for saving; Custom carries the two dials. */
+    var pdfFormat by mutableStateOf<PdfGenerator.PdfFormat>(PdfGenerator.PdfFormat.FitToPage)
+
+    /** Human-readable name of the folder PDFs are saved into. */
+    var pdfSaveFolder by mutableStateOf<String?>(null)
+
+    /** Set while the save-filename panel is up. */
+    var showSavePrompt by mutableStateOf(false)
+    var pendingSaveFileName by mutableStateOf<String?>(null)
+
     private var pdfBytes: ByteArray? = null
+
+    /**
+     * Where every chord name sits on each rendered preview page, in PDF points.
+     * Built while the PDF is generated so a tap on the preview can find the
+     * chord it landed on without any bitmap pixel peeping.
+     */
+    var chordHitMap by mutableStateOf(PdfGenerator.ChordHitMap.EMPTY)
+        private set
+
+    /** Set while the tapped-chord popup is up. */
+    var showChordPopup by mutableStateOf(false)
+        private set
+    var popupChordName by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * The popup's pictures: pages from the same chord-book renderer the Chord
+     * Shape Search screen prints with, so the popup reads exactly like the
+     * saved PDF — white paper, black ink.
+     */
+    var popupChordPages by mutableStateOf<List<Bitmap>>(emptyList())
+        private set
+    var popupChordLoading by mutableStateOf(false)
+        private set
+
+    /** Rendered pages per chord name; the oldest entry falls out past eight. */
+    private val popupPagesCache = object : LinkedHashMap<String, List<Bitmap>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Bitmap>>): Boolean =
+            size > 8
+    }
+    private var popupRenderJob: Job? = null
+
     private var renderJob: Job? = null
+    private var saveTreeUri: Uri? = null
+
+    companion object {
+        /** Matches the chord search screen's raster scale, so the pictures look the same. */
+        private const val POPUP_RENDER_SCALE = 1.5f
+    }
 
     fun loadTab(tabId: Long) {
         isLoading = true
@@ -49,6 +103,7 @@ class TabViewerViewModel : ViewModel() {
         // frame that is still drawing them. GC reclaims them safely.
         pdfPages = emptyList()
         pdfBytes = null
+        chordHitMap = PdfGenerator.ChordHitMap.EMPTY
         youtubeUrl = null
 
         viewModelScope.launch {
@@ -106,14 +161,16 @@ class TabViewerViewModel : ViewModel() {
             isRenderingPdf = true
             try {
                 val link = youtubeUrl
-                val size = pdfFontSize
+                val format = pdfFormat
+                var hitMap = PdfGenerator.ChordHitMap.EMPTY
                 val bytes = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdfToBytes(tabResult, link, size)
+                    PdfGenerator.generatePdfToBytes(tabResult, link, format) { hitMap = it }
                 }
                 pdfBytes = bytes
                 val pages = withContext(Dispatchers.IO) { renderPdfPages(bytes) }
                 // A newer font size may have been picked while we were rendering.
-                if (size != pdfFontSize) return@launch
+                if (format != pdfFormat) return@launch
+                chordHitMap = hitMap
                 pdfPages = pages
             } catch (e: CancellationException) {
                 throw e
@@ -125,14 +182,79 @@ class TabViewerViewModel : ViewModel() {
         }
     }
 
-    /** Re-renders the PDF preview at the chosen font size. */
-    fun updatePdfFontSize(size: Float) {
-        if (size == pdfFontSize) return
-        pdfFontSize = size
+    /** Re-renders the PDF preview with the chosen format. */
+    fun updatePdfFormat(format: PdfGenerator.PdfFormat) {
+        if (format == pdfFormat) return
+        pdfFormat = format
         tab?.takeIf { isChordType }?.let { generatePdfPreview(it) }
     }
 
-    private fun renderPdfPages(pdfData: ByteArray): List<Bitmap> {
+    /** The chord under a tap on preview page [page] at PDF-point coordinates, or null. */
+    fun chordAt(page: Int, x: Float, y: Float): PdfGenerator.ChordHit? =
+        chordHitMap.chordAt(page, x, y)
+
+    /**
+     * Slash chords ("G/B") are looked up under their plain name; everything
+     * else goes through untouched.
+     */
+    private fun normalizeChordName(name: String): String {
+        val slash = name.indexOf('/')
+        return if (slash > 0) name.substring(0, slash).trim() else name.trim()
+    }
+
+    /** Opens the quick-look popup for the chord tapped in the preview. */
+    fun showChordPopup(name: String) {
+        popupChordName = name
+        showChordPopup = true
+
+        // The pictures come from the same chord-book search the Chord Shape
+        // Search screen runs, so tapping Cadd9 shows Cadd9's own voicings —
+        // the same pages that search would print. Rendered per chord name and
+        // cached, so every tap on the same chord reuses the last tap's pages.
+        popupRenderJob?.cancel()
+        val query = normalizeChordName(name)
+        if (query.isEmpty()) {
+            popupChordPages = emptyList()
+            popupChordLoading = false
+            return
+        }
+        val cached = popupPagesCache[query]
+        if (cached != null) {
+            popupChordPages = cached
+            popupChordLoading = false
+            return
+        }
+        popupChordPages = emptyList()
+        popupChordLoading = true
+        popupRenderJob = viewModelScope.launch {
+            val pages = withContext(Dispatchers.Default) {
+                runCatching {
+                    val shapes = chordBook.search(query)
+                    if (shapes.isEmpty()) return@runCatching emptyList<Bitmap>()
+                    renderPdfPages(
+                        ChordShapePdfGenerator.generateChordPdfToBytes(
+                            shapes = shapes,
+                            title = query,
+                            stringLabels = chordBook.stringLabels,
+                            fretsOnChord = chordBook.fretsOnChord
+                        ),
+                        scale = POPUP_RENDER_SCALE
+                    )
+                }.getOrDefault(emptyList())
+            }
+            if (pages.isNotEmpty()) popupPagesCache[query] = pages
+            popupChordPages = pages
+            popupChordLoading = false
+        }
+    }
+
+    fun dismissChordPopup() {
+        showChordPopup = false
+        popupRenderJob?.cancel()
+        popupChordLoading = false
+    }
+
+    private fun renderPdfPages(pdfData: ByteArray, scale: Float = 2f): List<Bitmap> {
         val bitmaps = mutableListOf<Bitmap>()
         val tempFile = File.createTempFile("preview", ".pdf")
         try {
@@ -142,10 +264,9 @@ class TabViewerViewModel : ViewModel() {
 
             for (i in 0 until renderer.pageCount) {
                 val page = renderer.openPage(i)
-                val scale = 2
                 val bitmap = Bitmap.createBitmap(
-                    page.width * scale,
-                    page.height * scale,
+                    (page.width * scale).toInt().coerceAtLeast(1),
+                    (page.height * scale).toInt().coerceAtLeast(1),
                     Bitmap.Config.ARGB_8888
                 )
                 bitmap.eraseColor(android.graphics.Color.WHITE)
@@ -162,8 +283,42 @@ class TabViewerViewModel : ViewModel() {
         return bitmaps
     }
 
-    fun savePdf(context: Context) {
+    /** Opens the save panel pre-filled with the default name for this sheet. */
+    fun requestSavePdf() {
         val currentTab = tab ?: return
+        pendingSaveFileName = PdfGenerator.sanitizeFileName("${currentTab.artistName} - ${currentTab.songName}.pdf")
+        showSavePrompt = true
+    }
+
+    fun dismissSavePrompt() {
+        showSavePrompt = false
+    }
+
+    /** Remembers the folder the user picked; the name sticks between sheets. */
+    fun setSaveFolder(context: Context, treeUri: Uri) {
+        saveTreeUri = treeUri
+        pdfSaveFolder = folderDisplayName(context, treeUri)
+    }
+
+    private fun folderDisplayName(context: Context, treeUri: Uri): String? {
+        return try {
+            val resolver = context.contentResolver
+            resolver.query(
+                treeUri,
+                arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun confirmSavePdf(context: Context) {
+        val currentTab = tab ?: return
+        val treeUri = saveTreeUri ?: return
+        val fileName = pendingSaveFileName ?: return
         isGeneratingPdf = true
         pdfSuccess = null
         errorMessage = null
@@ -177,14 +332,25 @@ class TabViewerViewModel : ViewModel() {
                 )
                 if (youtubeUrl == null) youtubeUrl = link
 
-                val file = withContext(Dispatchers.IO) {
-                    PdfGenerator.generatePdf(context, currentTab, link, pdfFontSize)
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val document = PdfGenerator.buildDocumentForSave(currentTab, link, pdfFormat)
+                        try {
+                            PdfGenerator.saveToFolder(context, document, fileName, treeUri)
+                        } finally {
+                            document.close()
+                        }
+                    }
                 }
-                pdfSuccess = if (link != null) {
-                    "Saved to Downloads/UG Viewer/${file.name} • YouTube link included"
-                } else {
-                    "Saved to Downloads/UG Viewer/${file.name}"
-                }
+                result.fold(
+                    onSuccess = { file ->
+                        pdfSuccess = "Saved ${file.name} to ${pdfSaveFolder ?: "the selected folder"}"
+                        showSavePrompt = false
+                    },
+                    onFailure = { error ->
+                        errorMessage = "PDF save failed: ${error.message}"
+                    }
+                )
             } catch (e: Exception) {
                 errorMessage = "PDF save failed: ${e.message}"
             } finally {
@@ -194,7 +360,29 @@ class TabViewerViewModel : ViewModel() {
     }
 
     fun generatePdf(context: Context) {
-        savePdf(context)
+        // Text tabs keep the one-tap save: straight to Downloads, no panel.
+        val currentTab = tab ?: return
+        isGeneratingPdf = true
+        pdfSuccess = null
+        errorMessage = null
+
+        viewModelScope.launch {
+            try {
+                val link = youtubeUrl ?: YouTubeHelper.findSongVideo(
+                    currentTab.artistName, currentTab.songName
+                )
+                if (youtubeUrl == null) youtubeUrl = link
+
+                val file = withContext(Dispatchers.IO) {
+                    PdfGenerator.generatePdf(context, currentTab, link, pdfFormat)
+                }
+                pdfSuccess = "Saved to Downloads/UG Viewer/${file.name}"
+            } catch (e: Exception) {
+                errorMessage = "PDF save failed: ${e.message}"
+            } finally {
+                isGeneratingPdf = false
+            }
+        }
     }
 
     fun increaseFontSize() {
@@ -208,6 +396,7 @@ class TabViewerViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         renderJob?.cancel()
+        popupRenderJob?.cancel()
         // Safe to free here: the screen has been disposed, nothing is drawing.
         pdfPages.forEach { it.recycle() }
         pdfPages = emptyList()

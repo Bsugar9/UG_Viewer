@@ -18,8 +18,8 @@ import java.io.FileOutputStream
 
 object PdfGenerator {
 
-    private const val PAGE_WIDTH = 595   // A4 at 72 DPI
-    private const val PAGE_HEIGHT = 842
+    const val PAGE_WIDTH = 595   // A4 at 72 DPI
+    const val PAGE_HEIGHT = 842
     private const val MARGIN_LEFT = 50
     private const val MARGIN_RIGHT = 50
     private const val MARGIN_TOP = 50
@@ -44,13 +44,40 @@ object PdfGenerator {
     const val MIN_FONT_SIZE = 29f
     const val MAX_FONT_SIZE = 42f
 
+    // Custom dial defaults: where the two sizes start the first time Custom is
+    // picked, matching the old single "font size" behaviour.
+    const val DEFAULT_CUSTOM_CHORD_FONT_SIZE = 32f
+    const val DEFAULT_CUSTOM_LYRIC_FONT_SIZE = 32f
+
+    // Preset page sizes pin the body sizes: a preset sheet is meant to print
+    // the same way every time, so the custom font setting cannot touch it.
+    // Small: the compact preset for dense sheets.
+    const val CHORD_SMALL_PT = 10.5f
+    const val LYRIC_SMALL_PT = 11f
+
+    /** Most digits a typed size can hold ("42" has two). */
+    const val MAX_FONT_SIZE_DIGITS = 2
+
     /**
-     * Every draw metric is derived from one body font size. Chords and lyrics
-     * always use the same point size, so their monospace advance widths match
-     * and a chord stays exactly above its lyric column at any size.
+     * A size typed into a field, held to the printable range. Null while the
+     * digits are still a prefix no printable size can start with, so the field
+     * can be left alone instead of fighting what is being typed.
+     */
+    fun fontSizeFromTyped(digits: String): Float? {
+        if (digits.isEmpty() || digits.length > MAX_FONT_SIZE_DIGITS) return null
+        val value = digits.toFloatOrNull() ?: return null
+        if (value < MIN_FONT_SIZE / 10f) return null
+        return value.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    }
+
+    /**
+     * Every draw metric is derived from the body font sizes. Chords and lyrics
+     * share one monospace grid, so their advance widths still match and a chord
+     * stays exactly above its lyric column at any size pair.
      */
     private data class PdfStyle(
-        val fontSize: Float,
+        val chordFontSize: Float,
+        val lyricFontSize: Float,
         val chordBaseline: Float,
         val lyricBaseline: Float,
         val chordRowHeight: Float,
@@ -65,15 +92,17 @@ object PdfGenerator {
         val badgeHeight: Float
     ) {
         companion object {
-            fun forFontSize(size: Float): PdfStyle {
-                val k = size / BASE_FONT_SIZE
+            fun forFontSizes(chordSize: Float, lyricSize: Float): PdfStyle {
+                val kc = chordSize / BASE_FONT_SIZE
+                val kl = lyricSize / BASE_FONT_SIZE
                 return PdfStyle(
-                    fontSize = size,
-                    chordBaseline = CHORD_BASELINE * k,
-                    lyricBaseline = LYRIC_BASELINE * k,
-                    chordRowHeight = CHORD_ROW_HEIGHT * k,
-                    plainRowHeight = PLAIN_ROW_HEIGHT * k,
-                    gapHeight = GAP_HEIGHT * k,
+                    chordFontSize = chordSize,
+                    lyricFontSize = lyricSize,
+                    chordBaseline = CHORD_BASELINE * kc,
+                    lyricBaseline = LYRIC_BASELINE * kl,
+                    chordRowHeight = CHORD_ROW_HEIGHT * maxOf(kc, kl),
+                    plainRowHeight = PLAIN_ROW_HEIGHT * kl,
+                    gapHeight = GAP_HEIGHT * kl,
                     // Header/footer metrics are fixed (not scaled) so a large
                     // body font cannot inflate the header and consume the page.
                     titleSize = HEADER_FONT_SIZE,
@@ -155,13 +184,56 @@ object PdfGenerator {
         class Gap(val height: Float = GAP_HEIGHT) : PdfRow()
     }
 
+    /** Where a drawn chord name lives on its page, in PDF points. */
+    class ChordHit(val page: Int, val name: String, val left: Float, val top: Float, val right: Float, val bottom: Float) {
+        /** True when [x]/[y] (page points) fall inside this chord's box. */
+        fun contains(x: Float, y: Float): Boolean =
+            x >= left && x <= right && y >= top && y <= bottom
+    }
+
+    /** Per-page chord hit boxes produced alongside a generated document. */
+    class ChordHitMap(val hits: List<ChordHit>) {
+        /** The chord under (x, y) on [page], or null when the tap lands on nothing. */
+        fun chordAt(page: Int, x: Float, y: Float): ChordHit? =
+            hits.lastOrNull { it.page == page && it.contains(x, y) }
+
+        companion object {
+            val EMPTY = ChordHitMap(emptyList())
+        }
+    }
+
+    /**
+     * Page setup for a chord sheet. Small is a fixed size that ignores the
+     * font setting; anything else picks the body size directly.
+     */
+    sealed class PdfFormat {
+        object Small : PdfFormat()
+        object FitToPage : PdfFormat()
+        data class Custom(val chordFontSize: Float, val lyricFontSize: Float) : PdfFormat()
+    }
+
+    val PDF_FORMATS: List<PdfFormat> =
+        listOf(PdfFormat.Small, PdfFormat.FitToPage, PdfFormat.Custom(DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE))
+
+    fun labelOf(format: PdfFormat): String = when (format) {
+        PdfFormat.Small -> "Small"
+        PdfFormat.FitToPage -> "Fit To Page"
+        is PdfFormat.Custom -> "Custom"
+    }
+
+    /** Presets compare by kind only, so the menu marks Custom selected however its sizes were last set. */
+    fun isSameKindAs(a: PdfFormat, b: PdfFormat): Boolean = when {
+        a is PdfFormat.Custom && b is PdfFormat.Custom -> true
+        else -> a == b
+    }
+
     fun generatePdf(
         context: Context,
         tab: TabResult,
         youtubeUrl: String? = null,
-        fontSize: Float = DEFAULT_FONT_SIZE
+        format: PdfFormat = PdfFormat.FitToPage
     ): File {
-        val document = buildPdfDocument(tab, youtubeUrl, fontSize)
+        val document = buildPdfDocument(tab, youtubeUrl, format)
         val fileName = sanitizeFileName("${tab.artistName} - ${tab.songName}.pdf")
         val file = saveToDownloads(context, document, fileName)
         document.close()
@@ -171,33 +243,53 @@ object PdfGenerator {
     fun generatePdfToBytes(
         tab: TabResult,
         youtubeUrl: String? = null,
-        fontSize: Float = DEFAULT_FONT_SIZE
+        format: PdfFormat = PdfFormat.FitToPage,
+        hitMapOut: (ChordHitMap) -> Unit = {}
     ): ByteArray {
-        val document = buildPdfDocument(tab, youtubeUrl, fontSize)
+        val document = buildPdfDocument(tab, youtubeUrl, format, hitMapOut)
         val outputStream = ByteArrayOutputStream()
         document.writeTo(outputStream)
         document.close()
         return outputStream.toByteArray()
     }
 
+    private fun PdfFormat.bodyFontSizes(): Pair<Float, Float> = when (this) {
+        PdfFormat.Small -> CHORD_SMALL_PT to LYRIC_SMALL_PT
+        PdfFormat.FitToPage -> DEFAULT_FONT_SIZE to DEFAULT_FONT_SIZE
+        is PdfFormat.Custom ->
+            chordFontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) to
+                lyricFontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    }
+
+    /** Builds the document for the save flow; the caller owns and closes it. */
+    fun buildDocumentForSave(
+        tab: TabResult,
+        youtubeUrl: String?,
+        format: PdfFormat
+    ): PdfDocument = buildPdfDocument(tab, youtubeUrl, format)
+
     private fun buildPdfDocument(
         tab: TabResult,
         youtubeUrl: String?,
-        fontSize: Float
+        format: PdfFormat,
+        hitMapOut: (ChordHitMap) -> Unit = {}
     ): PdfDocument {
         val document = PdfDocument()
-        val style = PdfStyle.forFontSize(fontSize.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE))
+        val (chordSize, lyricSize) = format.bodyFontSizes()
+        // Chords and lyrics each get their own style; the shared monospace grid
+        // below is what still keeps a chord above its lyric column.
+        val style = PdfStyle.forFontSizes(chordSize, lyricSize)
 
         // Same monospace size for chords and lyrics so advance widths match.
         val lyricPaint = Paint().apply {
             color = colors.tabText
-            textSize = style.fontSize
+            textSize = style.lyricFontSize
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
             isAntiAlias = true
         }
         val chordPaint = Paint().apply {
             color = colors.chord
-            textSize = style.fontSize
+            textSize = style.chordFontSize
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             isAntiAlias = true
         }
@@ -220,12 +312,14 @@ object PdfGenerator {
         // Guards pagination: a row taller than a whole page must still be drawn,
         // otherwise the page-break loop would never terminate.
         var rowsOnPage = 0
+        val hitMap = ChordHitMap(mutableListOf())
+        val chordHits = hitMap.hits as MutableList<ChordHit>
 
         for (row in rows) {
             val h = when (row) {
                 is PdfRow.ChordLyric -> style.chordRowHeight * row.segments.size
                 is PdfRow.Plain -> style.plainRowHeight
-                is PdfRow.Gap -> row.height * (style.fontSize / BASE_FONT_SIZE)
+                is PdfRow.Gap -> row.height * (style.lyricFontSize / BASE_FONT_SIZE)
             }
             if (rowsOnPage > 0 && y + h > pageLimit) {
                 drawPageFooter(canvas, pageNum, tab, style)
@@ -242,7 +336,20 @@ object PdfGenerator {
                     for (seg in row.segments) {
                         val x0 = MARGIN_LEFT.toFloat()
                         for ((rel, name) in seg.chords) {
-                            canvas.drawText(name, x0 + rel * charWidth, sy + style.chordBaseline, chordPaint)
+                            val x = x0 + rel * charWidth
+                            canvas.drawText(name, x, sy + style.chordBaseline, chordPaint)
+                            // Same box the tap target uses: half a character of
+                            // slack around the glyphs so a near miss still hits.
+                            chordHits.add(
+                                ChordHit(
+                                    page = pageNum,
+                                    name = name,
+                                    left = x - charWidth / 2f,
+                                    top = sy,
+                                    right = x + chordPaint.measureText(name) + charWidth / 2f,
+                                    bottom = sy + style.chordRowHeight
+                                )
+                            )
                         }
                         if (seg.lyric.isNotEmpty()) {
                             canvas.drawText(seg.lyric, x0, sy + style.lyricBaseline, lyricPaint)
@@ -259,6 +366,7 @@ object PdfGenerator {
 
         drawPageFooter(canvas, pageNum, tab, style)
         document.finishPage(page)
+        hitMapOut(hitMap)
         return document
     }
 
@@ -578,7 +686,7 @@ object PdfGenerator {
             MARGIN_LEFT.toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 5f,
             (PAGE_WIDTH - MARGIN_RIGHT).toFloat(), PAGE_HEIGHT - MARGIN_BOTTOM + 5f, dividerPaint
         )
-        val footerText = "UG Viewer  |  Page $pageNum  |  Font ${metrics.fontSize.toInt()}pt  |  Source: ${tab.urlWeb}"
+        val footerText = "UG Viewer  |  Page $pageNum  |  Font ${metrics.lyricFontSize.toInt()}pt  |  Source: ${tab.urlWeb}"
         val usableWidth = (PAGE_WIDTH - MARGIN_RIGHT - MARGIN_LEFT).toFloat()
         canvas.drawText(
             fitToWidth(footerText, pageFooterPaint, usableWidth),
@@ -613,6 +721,59 @@ object PdfGenerator {
             }
             return file
         }
+    }
+
+    /**
+     * Writes the document into a folder the user picked with the system folder
+     * picker. The tree URI persists across processes, so the grant is taken
+     * again here rather than being assumed. Files colliding with an existing
+     * name get the usual " (1)" suffix instead of overwriting.
+     */
+    fun saveToFolder(context: Context, document: PdfDocument, fileName: String, treeUri: android.net.Uri): File {
+        val resolver = context.contentResolver
+        resolver.takePersistableUriPermission(
+            treeUri,
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        val root = android.provider.DocumentsContract.buildDocumentUriUsingTree(
+            treeUri,
+            android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        )
+        val cleanName = sanitizeFileName(fileName)
+        val finalName = uniqueNameIn(resolver, root, cleanName)
+        val target = android.provider.DocumentsContract.createDocument(
+            resolver, root, "application/pdf", finalName
+        ) ?: throw Exception("Failed to create file in the selected folder")
+        resolver.openOutputStream(target)?.use { outputStream ->
+            document.writeTo(outputStream)
+        } ?: throw Exception("Failed to open output stream")
+        return File(File(cleanName).name)
+    }
+
+    /** Finds a display name not already taken, appending " (n)" before the extension. */
+    private fun uniqueNameIn(resolver: android.content.ContentResolver, folder: android.net.Uri, fileName: String): String {
+        val dot = fileName.lastIndexOf('.')
+        val base = if (dot > 0) fileName.substring(0, dot) else fileName
+        val ext = if (dot > 0) fileName.substring(dot) else ""
+        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(
+            folder,
+            android.provider.DocumentsContract.getTreeDocumentId(folder)
+        )
+        val taken = mutableSetOf<String>()
+        try {
+            resolver.query(childrenUri, arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) taken.add(cursor.getString(0))
+            }
+        } catch (e: Exception) {
+            // If the listing fails, keep the requested name; SAF createDocument
+            // deconflicts on its own for providers that must.
+            return fileName
+        }
+        if (fileName !in taken) return fileName
+        var n = 1
+        while ("$base ($n)$ext" in taken) n++
+        return "$base ($n)$ext"
     }
 
     internal fun sanitizeFileName(name: String): String {

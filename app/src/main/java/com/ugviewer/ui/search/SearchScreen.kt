@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Search
@@ -42,6 +44,7 @@ import com.ugviewer.api.SearchTab
 import com.ugviewer.ui.theme.*
 import com.ugviewer.BuildConfig
 import com.ugviewer.R
+import com.ugviewer.viewmodel.SearchHistoryEntry
 import com.ugviewer.viewmodel.SearchViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -146,12 +149,25 @@ fun SearchScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "UG Viewer",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Highlight
-                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = "UG Viewer",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Highlight,
+                        modifier = Modifier.alignByBaseline()
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        // Kept beside the title, not on its own line: the
+                        // version is context, not a headline of its own.
+                        text = "- v${BuildConfig.VERSION_NAME}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Highlight.copy(alpha = 0.7f),
+                        modifier = Modifier.alignByBaseline()
+                    )
+                }
                 Image(
                     painter = painterResource(id = R.mipmap.ic_launcher),
                     contentDescription = "App Icon",
@@ -166,13 +182,6 @@ fun SearchScreen(
                 text = "Search for Artist Songs and Chords for Guitar",
                 fontSize = 14.sp,
                 color = TextSecondary,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-
-            Text(
-                text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                fontSize = 11.sp,
-                color = TextSecondary.copy(alpha = 0.6f),
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
@@ -288,9 +297,96 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Recent lookups only claim the screen while no results are
+                // showing, so a search always pushes them out of the way.
+                if (viewModel.results.isEmpty() && viewModel.history.isNotEmpty()) {
+                    item(key = "history-header") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Recent searches",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextSecondary
+                            )
+                            IconButton(
+                                onClick = { viewModel.clearHistory() },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Clear search history",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                    items(
+                        viewModel.history,
+                        key = { "history-${it.query}" }
+                    ) { entry ->
+                        SearchHistoryItem(entry = entry) {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            viewModel.searchFromHistory(entry)
+                        }
+                    }
+                }
+
                 items(viewModel.results) { tab ->
                     SearchResultItem(tab = tab, onClick = { onTabSelected(tab.id) })
                 }
+            }
+        }
+    }
+}
+
+/**
+ * One recent lookup: "Artist – Song" on one line, one tap re-runs the search
+ * exactly as if it had been typed into the box.
+ */
+@Composable
+fun SearchHistoryItem(entry: SearchHistoryEntry, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = Surface),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.History,
+                contentDescription = null,
+                tint = TextSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.songName,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = entry.artistName,
+                    fontSize = 10.sp,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

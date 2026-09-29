@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -54,6 +56,13 @@ fun clampPan(offset: Offset, viewport: IntSize, scale: Float): Offset {
 /**
  * Scrollable, pinch-zoomable list of rendered PDF pages. Shared by the tab
  * viewer and the chord-shape print screen so both get identical navigation.
+ *
+ * [onPageTapped] reports single taps landing on a page as (pageIndex, point in
+ * that page's bitmap coordinates). Double taps stay reserved for zoom and are
+ * never reported, so the chord popup does not fight the zoom gesture. The
+ * coordinate conversion goes through [LayoutCoordinates.localPositionOf], so
+ * zoom, scroll and page margins are all handled by Compose rather than by
+ * manual arithmetic here.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -61,12 +70,20 @@ fun PdfPagesPreview(
     pages: List<Bitmap>,
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
-    bottomContent: @Composable () -> Unit = {}
+    bottomContent: @Composable () -> Unit = {},
+    onPageTapped: ((pageIndex: Int, pointInPage: Offset) -> Unit)? = null
 ) {
     var scale by remember { mutableFloatStateOf(MIN_PDF_SCALE) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
+
+    // The node whose local space detectTapGestures reports, and every page
+    // card, kept current by layout callbacks. Taps are converted from one to
+    // the other with localPositionOf, which sees through the zoom transform,
+    // the scroll offset and the column padding alike.
+    var tapArea by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var cardCoords by remember(pages) { mutableStateOf(List(pages.size) { null as LayoutCoordinates? }) }
 
     Box(
         modifier = modifier
@@ -96,8 +113,30 @@ fun PdfPagesPreview(
                     translationY = offset.y
                 )
                 .verticalScroll(scrollState)
-                .pointerInput(Unit) {
+                .onGloballyPositioned { tapArea = it }
+                .pointerInput(onPageTapped) {
+                    if (onPageTapped == null) return@pointerInput
                     detectTapGestures(
+                        onTap = { tap ->
+                            val area = tapArea ?: return@detectTapGestures
+                            for (index in pages.indices) {
+                                val card = cardCoords.getOrNull(index) ?: continue
+                                if (!card.isAttached) continue
+                                val inCard = card.localPositionOf(area, tap)
+                                if (inCard.x < 0f || inCard.y < 0f ||
+                                    inCard.x > card.size.width || inCard.y > card.size.height
+                                ) continue
+                                // Card local pixels -> page bitmap pixels.
+                                val bitmap = pages[index]
+                                if (card.size.width <= 0 || card.size.height <= 0) continue
+                                val point = Offset(
+                                    inCard.x * bitmap.width / card.size.width,
+                                    inCard.y * bitmap.height / card.size.height
+                                )
+                                onPageTapped(index, point)
+                                return@detectTapGestures
+                            }
+                        },
                         onDoubleTap = {
                             scale = if (scale > MIN_PDF_SCALE) MIN_PDF_SCALE else DOUBLE_TAP_SCALE
                             offset = Offset.Zero
@@ -117,7 +156,14 @@ fun PdfPagesPreview(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 8.dp),
+                        .padding(bottom = 8.dp)
+                        .onGloballyPositioned { coords ->
+                            if (index < cardCoords.size) {
+                                cardCoords = cardCoords.toMutableList().also {
+                                    it[index] = coords
+                                }
+                            }
+                        },
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     shape = RoundedCornerShape(8.dp),
                     elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)

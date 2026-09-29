@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -37,8 +38,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -260,7 +263,7 @@ fun TabViewerScreen(
 
     if (viewModel.showSavePrompt) {
         SavePdfPanel(
-            fileName = viewModel.pendingSaveFileName,
+            fileName = viewModel.pendingSaveFileName ?: "",
             folder = viewModel.pdfSaveFolder ?: "Downloads / UG Viewer",
             isSaving = viewModel.isGeneratingPdf,
             isPickingFolder = pickingFolder,
@@ -270,6 +273,15 @@ fun TabViewerScreen(
                 pickingFolder = true
                 folderPicker.launch(null)
             }
+        )
+    }
+
+    if (viewModel.showChordPopup) {
+        ChordDiagramPopup(
+            chordName = viewModel.popupChordName,
+            pages = viewModel.popupChordPages,
+            isLoading = viewModel.popupChordLoading,
+            onDismiss = { viewModel.dismissChordPopup() }
         )
     }
 }
@@ -344,8 +356,119 @@ fun PdfPreviewContent(
                 isLoading = viewModel.isFetchingYouTube,
                 onOpen = { viewModel.openYouTube(context) }
             )
+        },
+        onPageTapped = { pageIndex, pointInPage ->
+            val bitmap = pages.getOrNull(pageIndex) ?: return@PdfPagesPreview
+            // Preview pixels -> PDF points: the preview is the page scaled
+            // down, and the hit map is in page points.
+            val pdfX = pointInPage.x * PdfGenerator.PAGE_WIDTH / bitmap.width
+            val pdfY = pointInPage.y * PdfGenerator.PAGE_HEIGHT / bitmap.height
+            val hit = viewModel.chordAt(pageIndex + 1, pdfX, pdfY) ?: return@PdfPagesPreview
+            viewModel.showChordPopup(hit.name)
         }
     )
+}
+
+/**
+ * Quick-look popup for a chord tapped in the PDF preview.
+ *
+ * The pictures are pages straight from the same chord-book generator the
+ * Chord Shape Search screen prints with, so the popup reads exactly like the
+ * saved PDF: white paper, black ink, identical diagrams — one tap lands on the
+ * family page with the tapped chord's name on it first.
+ *
+ * Dismissed by a tap outside the card, the back gesture, or the Close button.
+ */
+@Composable
+fun ChordDiagramPopup(
+    chordName: String?,
+    pages: List<Bitmap>,
+    isLoading: Boolean,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .padding(horizontal = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = ChordYellow,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = chordName ?: "",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1A1A2E)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (pages.isNotEmpty()) {
+                    // One root family per render, so these pages are already
+                    // the tapped chord's pages in the book's own order. Bounded
+                    // so a big family scrolls instead of growing the dialog
+                    // past the screen.
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        pages.forEachIndexed { index, bitmap ->
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Chord diagrams page ${index + 1}",
+                                modifier = Modifier.fillMaxWidth(),
+                                contentScale = ContentScale.FillWidth
+                            )
+                        }
+                    }
+                } else if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(vertical = 32.dp),
+                        color = Highlight
+                    )
+                } else {
+                    Text(
+                        text = "No diagram available for this chord.",
+                        fontSize = 13.sp,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Accent,
+                        contentColor = TextPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }
 
 @Composable

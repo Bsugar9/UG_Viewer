@@ -17,13 +17,15 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - Every page credits the [chords-db](https://github.com/tombatossals/chords-db) source (MIT)
 - **Chord charts** rendered as PDF with color-coded formatting
 - **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, and stay there even when long lines wrap
-- **Adjustable chord font size** (29-42pt) so big-print chord sheets fit the page without clipping
+- **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
+- **Page presets** — Small, Fit To Page, or Custom with independent chord/lyric font dials (29-42pt), re-rendered live in the preview
+- **Recent searches** — the home screen remembers your last lookups; tap one to search Ultimate Guitar again in one tap, or clear the whole list with the trash button
 - **"Listen on YouTube"** — the app finds a matching video for the song automatically:
   - Tap the bar in the viewer to hear the song while you play
   - "Watch on YouTube" action right from the save-PDF confirmation
   - A `Listen on YouTube: <link>` line embedded in every saved PDF
 - **Tab viewer** with adjustable font size and pinch-to-zoom
-- **Save PDF** chord sheets directly to your Downloads folder (`Downloads/UG Viewer`)
+- **Save PDF** chord sheets to your Downloads folder (`Downloads/UG Viewer`) or any folder you pick with the system folder picker — the choice sticks for next time
 - Dark theme with custom color palette
 - Adaptive layout for phones, tablets, and foldables
 
@@ -67,7 +69,7 @@ If the Android SDK isn't at the default location, set its path in `local.propert
 
 ### Versioning
 
-The version is derived from the commit count, so committing a change is all it takes to bump it. `twoPointZeroCommit` in `app/build.gradle.kts` is the commit that opened the 2.x line; commits after it produce 2.01, 2.02, and so on, while `versionCode` stays the raw commit count so Android always accepts an upgrade.
+The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.50**. The version shows in the app header beside the title.
 
 ### Release signing
 
@@ -85,7 +87,7 @@ Without them `assembleRelease` still succeeds but falls back to the debug key, s
 
 ### Tests
 
-The chord-name matching, spoken-phrase parsing, and PDF column layout are covered by JVM unit tests:
+The chord-name matching, spoken-phrase parsing, PDF column layout, and the chord shape engine (barre realization, curated voicings, slash-chord handling) are covered by JVM unit tests:
 
 ```
 gradlew.bat :app:testDebugUnitTest
