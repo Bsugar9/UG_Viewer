@@ -134,18 +134,18 @@ object PdfGenerator {
                 val kc = chordSize / BASE_FONT_SIZE
                 val kl = lyricSize / BASE_FONT_SIZE
                 // One number sets the desired lyric-to-lyric pitch; the chord's
-                // baseline is then exactly halfway between the two lyric
-                // baselines — centring falls out of the geometry, so no slider
-                // can ever de-centre it. When the fonts are too big for the
-                // chosen pitch, the ROW GROWS to the minimum that keeps chord
-                // ink clear of both neighbouring lyric lines (see
-                // [minimumChordRowHeight]) rather than the chord moving.
+                // baseline is then EXACTLY halfway between the two lyric
+                // baselines (the row's vertical centre) — centring is geometry,
+                // no slider can de-centre it. When the fonts are too big for
+                // the chosen pitch, the ROW GROWS to the ink-clearance minimum
+                // (see [minimumChordRowHeight]) instead of the chord moving or
+                // touching either lyric line.
                 val chordRowHeight = maxOf(
                     theme.chordLinePitch * BASE_FONT_SIZE * maxOf(kc, kl),
                     minimumChordRowHeight(chordSize, lyricSize)
                 )
+                val chordBaseline = chordRowHeight / 2f
                 val lyricBaseline = chordRowHeight - DESCENDER * BASE_FONT_SIZE * kl
-                val chordBaseline = lyricBaseline - chordRowHeight / 2f
                 return PdfStyle(
                     chordFontSize = chordSize,
                     lyricFontSize = lyricSize,
@@ -191,7 +191,15 @@ object PdfGenerator {
         val lyricDescender = DESCENDER * lyricFontSize
         val lyricCap = LYRIC_CAP * lyricFontSize
         val chordDescent = CHORD_DESCENT * chordFontSize
-        return 2f * maxOf(chordAscent + lyricDescender, lyricCap + chordDescent)
+        // Each half-row must cover, with a pad to spare:
+        //  - above the centred chord: the line-above's descenders + chord ascent
+        //  - below it: chord descent + the lyric's capitals + its own descender
+        //    (the lyric baseline sits a descender's height above the row bottom)
+        val pad = 0.12f * maxOf(chordFontSize, lyricFontSize)
+        return 2f * maxOf(
+            chordAscent + lyricDescender,
+            chordDescent + lyricCap + lyricDescender
+        ) + 2f * pad
     }
 
     /**
@@ -446,7 +454,12 @@ object PdfGenerator {
                             // a character or two right of its lyric column.
                             val charted = seg.chords.map { x0 + it.first * charWidth }
                             val widths = seg.chords.map { chordPaint.measureText(it.second) }
-                            val xs = resolveChordXs(charted, widths, x0, PAGE_WIDTH - MARGIN_RIGHT.toFloat())
+                            // The no-overlap resolver must respect the WRAP
+                            // column, not the page margin: a chord pushed right
+                            // stops where the text wraps, matching the red
+                            // guide rule in the studio.
+                            val wrapColumnX = x0 + maxCols * charWidth
+                            val xs = resolveChordXs(charted, widths, x0, wrapColumnX)
                             for (entry in seg.chords.withIndex()) {
                                 val i = entry.index
                                 val name = entry.value.second

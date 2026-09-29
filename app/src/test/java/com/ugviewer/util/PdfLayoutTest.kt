@@ -20,18 +20,35 @@ class PdfLayoutTest {
 
     @Test
     fun `chord row always leaves ink clearance at every font pair`() {
-        // The 32/32 centred layout that grazed must now clear: the row height
-        // grows past the pitch when the fonts demand it.
+        // Whatever the pitch slider asks, the effective row height (the larger
+        // of pitch vs minimum) must be at least the ink minimum.
         for (chord in listOf(10.5f, 22f, 32f, 42f)) {
             for (lyric in listOf(10.5f, 22f, 32f, 42f)) {
-                val row = 1.5f * 10f * maxOf(chord, lyric) / 10f
                 val min = PdfGenerator.minimumChordRowHeight(chord, lyric)
-                assertTrue(
-                    "pitch row ($row) below ink minimum ($min) for ${chord}pt/${lyric}pt",
-                    maxOf(row, min) >= min
-                )
+                val effective = maxOf(1.5f * 10f * maxOf(chord, lyric) / 10f, min)
+                assertTrue("effective row below ink minimum for ${chord}pt/${lyric}pt", effective >= min)
             }
         }
+    }
+
+    @Test
+    fun `centred chord clears both lyric lines at worst-case fonts`() {
+        // 32pt chords centred in a minimum-height row: chord ink must not
+        // reach the line above's descenders or the lyric capitals below.
+        val chordSize = 32f
+        val lyricSize = 32f
+        val row = PdfGenerator.minimumChordRowHeight(chordSize, lyricSize)
+        val chordAscent = 0.78f * chordSize
+        val chordDescent = 0.22f * chordSize
+        val lyricCap = 0.72f * lyricSize
+        // Chord top sits at row/2 - ascent from the row top; the line above's
+        // descenders reach DESCENDER * size past that row's last baseline.
+        val chordTop = row / 2f - chordAscent
+        val upperInk = 0.35f * lyricSize
+        val chordBottom = row / 2f + chordDescent
+        val lyricTop = row - 0.35f * lyricSize - lyricCap
+        assertTrue("chord grazes line above ($chordTop < $upperInk)", chordTop >= upperInk)
+        assertTrue("chord touches its lyric ($chordBottom > $lyricTop)", chordBottom <= lyricTop)
     }
 
     @Test

@@ -314,38 +314,41 @@ fun SearchScreen(
                 )
             }
 
+            // The history header is pinned: it sits outside the scrolling
+            // list so it never scrolls away — only the artists and songs move.
+            if (viewModel.results.isEmpty() && viewModel.history.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Recent Search History",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextSecondary
+                    )
+                    IconButton(
+                        onClick = { viewModel.clearHistory() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Clear search history",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Recent lookups only claim the screen while no results are
                 // showing, so a search always pushes them out of the way.
-                if (viewModel.results.isEmpty() && viewModel.history.isNotEmpty()) {
-                    item(key = "history-header") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Recent searches",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextSecondary
-                            )
-                            IconButton(
-                                onClick = { viewModel.clearHistory() },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Clear search history",
-                                    tint = TextSecondary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
+                if (viewModel.results.isEmpty()) {
                     items(
                         viewModel.history,
                         key = { "history-${it.query}" }
