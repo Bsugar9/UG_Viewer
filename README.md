@@ -19,6 +19,13 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
 - **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below — nudgeable up or down with the Studio's chord offset so a chord can sit closer to its own lyric
 - **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
 - **Page formats** — Small (the default), Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
+- **Auto-scroll the sheet** — every PDF preview carries a floating control bar in the corner (↑ − 30 dp/s + ▶) that scrolls the sheet from top to bottom on its own:
+  - **↑** jumps instantly to the top of the sheet
+  - **− / +** step through 16 preset paces, from a **1 dp/s crawl** (about 8 minutes for a page, for freezing on a single chord) up to 600 dp/s for skimming, with the current speed shown between them
+  - It starts at **30 dp/s** — roughly 17 seconds for a page, slow enough to read a lyric line and its chords before they leave the screen. The rungs are packed tightly at the slow end (1, 2, 3, 5, 8, 12, 20, 30) where you play along, and spread out at the fast end
+  - The speed is in dp rather than pixels, so a sheet scrolls at the same readable pace on a cheap phone and a tablet
+  - Scrolling the sheet by hand stops the auto-scroll immediately and keeps the speed you picked, so tapping ▶ resumes at that pace
+  - It stops by itself at the end of the document, and pressing ▶ again replays the sheet from the top
 - **PDF Design Studio** — design how sheets look, opened from the ⚙ icon beside the version in the home header:
   - Six steppers: **chord size** and **lyric size** (10-42pt, starting at the Small preset), **offset** (slides every chord up or down inside the white space between the lyric lines, so you can pull a chord closer to its own word), **height** (lyric-only line height), **gap** (blank line between stanzas), and **wrap** (how much of the page width a line may use)
   - A red guide rule is drawn on the preview page at the column where lines wrap — drag Wrap and watch exactly where they break

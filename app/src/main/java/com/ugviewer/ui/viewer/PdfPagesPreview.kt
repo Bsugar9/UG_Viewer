@@ -30,6 +30,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -71,12 +74,27 @@ fun PdfPagesPreview(
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
     bottomContent: @Composable () -> Unit = {},
-    onPageTapped: ((pageIndex: Int, pointInPage: Offset) -> Unit)? = null
+    onPageTapped: ((pageIndex: Int, pointInPage: Offset) -> Unit)? = null,
+    showAutoScrollControls: Boolean = true
 ) {
     var scale by remember { mutableFloatStateOf(MIN_PDF_SCALE) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
+    val autoScroll = rememberPdfAutoScrollState()
+
+    // Scrolling the preview by hand is the reader taking over, so it stops the
+    // self-scroll instead of the two fighting over the same position.
+    val pauseOnManualScroll = remember(autoScroll) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) autoScroll.pause()
+                return Offset.Zero
+            }
+        }
+    }
+
+    PdfAutoScrollEffect(autoScroll, scrollState)
 
     // The node whose local space detectTapGestures reports, and every page
     // card, kept current by layout callbacks. Taps are converted from one to
@@ -89,6 +107,7 @@ fun PdfPagesPreview(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it }
+            .nestedScroll(pauseOnManualScroll)
             .pointerInput(Unit) {
                 detectTransformGestures(
                     onGesture = { _, pan, zoom, _ ->
@@ -182,6 +201,16 @@ fun PdfPagesPreview(
             bottomContent()
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        if (showAutoScrollControls) {
+            PdfAutoScrollControls(
+                state = autoScroll,
+                scrollState = scrollState,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(12.dp)
+            )
         }
     }
 }

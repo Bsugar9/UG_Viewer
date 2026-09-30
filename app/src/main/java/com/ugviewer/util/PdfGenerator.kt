@@ -102,10 +102,10 @@ object PdfGenerator {
         val plainRowHeight: Float = 1.2f,
         val stanzaGap: Float = 0.6f,
         val wrapFraction: Float = 1.0f,
-        val chordOffset: Float = 0.0f
+        val chordOffset: Float = 0.09f
     ) {
         companion object {
-            /** The shipped default: snug, with the chord centred as always. */
+            /** The shipped default: snug, with the chord visually centred between lyric lines. */
             val DEFAULT = PdfTheme()
 
             /** The original roomier layout, kept for comparison. */
