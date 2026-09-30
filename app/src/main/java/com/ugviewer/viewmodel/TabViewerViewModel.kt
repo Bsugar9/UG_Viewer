@@ -158,7 +158,7 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
         errorMessage = null
         // Pick up a Studio layout saved since the last song before rendering,
         // so the preview the user is about to see is the one they saved.
-        applySavedLayout()
+        applySavedLayout(force = true)
         // Drop the old previews by reference only; recycling here could race a
         // frame that is still drawing them. GC reclaims them safely.
         pdfPages = emptyList()

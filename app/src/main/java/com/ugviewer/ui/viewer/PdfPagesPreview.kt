@@ -77,8 +77,8 @@ fun PdfPagesPreview(
     onPageTapped: ((pageIndex: Int, pointInPage: Offset) -> Unit)? = null,
     showAutoScrollControls: Boolean = true
 ) {
-    var scale by remember { mutableFloatStateOf(MIN_PDF_SCALE) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var scale by remember(pages) { mutableFloatStateOf(MIN_PDF_SCALE) }
+    var offset by remember(pages) { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
     val autoScroll = rememberPdfAutoScrollState()
