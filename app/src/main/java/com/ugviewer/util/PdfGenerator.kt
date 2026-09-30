@@ -98,11 +98,11 @@ object PdfGenerator {
      * chord-over-its-word guarantee holds at every setting.
      */
     data class PdfTheme(
-        val chordLinePitch: Float = 1.5f,
+        val chordLinePitch: Float = 0.9f,
         val plainRowHeight: Float = 1.2f,
-        val stanzaGap: Float = 0.6f,
+        val stanzaGap: Float = 0.3f,
         val wrapFraction: Float = 1.0f,
-        val chordOffset: Float = 0.09f
+        val chordOffset: Float = 1.0f
     ) {
         companion object {
             /** The shipped default: snug, with the chord visually centred between lyric lines. */
