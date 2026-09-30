@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1094,6 +1095,12 @@ fun PdfFontSizeBar(
                                 },
                                 onClick = {
                                     expanded = false
+                                    // Reopening Custom reopens its dials too: picking a
+                                    // format that shows nothing because a previous choice
+                                    // hid the panel reads as a broken menu.
+                                    if (option is PdfGenerator.PdfFormat.Custom) {
+                                        customPanelExpanded = true
+                                    }
                                     onSelect(
                                         (if (option is PdfGenerator.PdfFormat.Custom) customSizes else option) to null
                                     )
@@ -1104,20 +1111,29 @@ fun PdfFontSizeBar(
                 }
 
                 if (custom != null) {
-                    OutlinedButton(
+                    // An icon, not a labelled button: the dials already take a
+                    // whole row, and the format and Save boxes split what is
+                    // left between them.
+                    IconButton(
                         onClick = { customPanelExpanded = !customPanelExpanded },
-                        modifier = Modifier.height(40.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Accent,
-                            contentColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp)
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Accent)
                     ) {
-                        Text(
-                            text = if (customPanelExpanded) "Hide" else "Sizes",
-                            fontSize = PDF_BAR_LABEL_SP.sp,
-                            fontWeight = FontWeight.Bold
+                        Icon(
+                            imageVector = if (customPanelExpanded) {
+                                Icons.Default.KeyboardArrowDown
+                            } else {
+                                Icons.Default.Tune
+                            },
+                            contentDescription = if (customPanelExpanded) {
+                                "Hide custom size options"
+                            } else {
+                                "Show custom size options"
+                            },
+                            tint = TextPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -1165,6 +1181,9 @@ fun PdfFontSizeBar(
  * The two size dials, shown once Custom is picked. A number can be typed straight
  * into its box for an exact size, or nudged a point at a time with the arrows,
  * which is the quicker way to walk a size up until the lines stop wrapping.
+ *
+ * The Hide button in the bar below collapses this panel, which hands its height
+ * back to the sheet for reading rather than tuning.
  */
 @Composable
 private fun CustomSizePanel(
