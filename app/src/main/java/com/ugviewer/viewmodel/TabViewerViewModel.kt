@@ -46,8 +46,12 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     var pdfPages by mutableStateOf<List<Bitmap>>(emptyList())
     var isRenderingPdf by mutableStateOf(false)
 
-    /** Body sizes for the preview and for saving; Custom carries the two dials. */
-    var pdfFormat by mutableStateOf<PdfGenerator.PdfFormat>(PdfGenerator.PdfFormat.FitToPage)
+    /**
+     * Body sizes for the preview and for saving. The app's default is the Small
+     * preset: the Studio's Reset means "use Small", and a tuned layout only
+     * takes over once it has been saved.
+     */
+    var pdfFormat by mutableStateOf<PdfGenerator.PdfFormat>(PdfGenerator.PdfFormat.Small)
 
     /** Spacing theme for the generated sheet; starts from the saved layout. */
     var pdfTheme by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT)
@@ -97,15 +101,52 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     private var saveTreeUri: Uri? = null
 
     init {
-        // A layout saved in the Studio is how sheets look from now on: sizes
-        // become the Custom dials' starting point, spacing comes with them.
-        PdfThemeStore.load(getApplication())?.let { saved ->
-            pdfTheme = saved.theme
-            (pdfFormat as? PdfGenerator.PdfFormat.Custom)?.let { custom ->
-                pdfFormat = custom.copy(chordFontSize = saved.chordSize, lyricFontSize = saved.lyricSize)
-            }
-        }
+        applySavedLayout(force = true)
     }
+
+    /** The Studio layout this view last adopted, so a newer save can be spotted. */
+    private var adoptedLayout: PdfThemeStore.Saved? = null
+
+    /**
+     * Adopts the Studio's saved layout: its two body sizes and its spacing
+     * theme, which together are how the sheets print.
+     *
+     * This view is activity-scoped, so it outlives the Studio: without
+     * re-reading the store here, a layout saved after the first song was
+     * opened would never reach the sheets that follow. Only a layout that
+     * actually changed is adopted, so a format picked in this viewer's own
+     * format bar survives until the user saves a newer layout in the Studio.
+     */
+    private fun applySavedLayout(force: Boolean = false) {
+        val saved = PdfThemeStore.load(getApplication())
+        if (saved == null) {
+            // Nothing stored yet — a first run, not a Reset: the shipped Small
+            // layout the format already starts on is the right answer, so only
+            // a discarded saved layout has anything to undo here.
+            if (force || adoptedLayout == null) return
+            adoptedLayout = PdfThemeStore.SHIPPED
+            pdfTheme = PdfThemeStore.SHIPPED.theme
+            pdfFormat = formatFor(PdfThemeStore.SHIPPED)
+            return
+        }
+        if (!force && saved == adoptedLayout) return
+        adoptedLayout = saved
+        pdfTheme = saved.theme
+        pdfFormat = formatFor(saved)
+    }
+
+    /**
+     * The format that prints [saved]. A saved layout only has point sizes to
+     * carry, so it needs Custom — except when those sizes are the shipped Small
+     * ones, which is what the Studio's Reset stores: keeping the named preset
+     * then leaves the format bar reading "Small" rather than "Custom".
+     */
+    private fun formatFor(saved: PdfThemeStore.Saved): PdfGenerator.PdfFormat =
+        if (PdfThemeStore.isShipped(saved)) {
+            PdfGenerator.PdfFormat.Small
+        } else {
+            PdfGenerator.PdfFormat.Custom(saved.chordSize, saved.lyricSize)
+        }
 
     companion object {
         /** Matches the chord search screen's raster scale, so the pictures look the same. */
@@ -115,6 +156,9 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     fun loadTab(tabId: Long) {
         isLoading = true
         errorMessage = null
+        // Pick up a Studio layout saved since the last song before rendering,
+        // so the preview the user is about to see is the one they saved.
+        applySavedLayout()
         // Drop the old previews by reference only; recycling here could race a
         // frame that is still drawing them. GC reclaims them safely.
         pdfPages = emptyList()

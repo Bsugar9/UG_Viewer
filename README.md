@@ -16,15 +16,17 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - Four diagrams per row on A4, 16 per page, ready to print
   - Every page credits the [chords-db](https://github.com/tombatossals/chords-db) source (MIT)
 - **Chord charts** rendered as PDF with color-coded formatting
-- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are always centred exactly between the lyric lines above and below
+- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below — nudgeable up or down with the Studio's chord offset so a chord can sit closer to its own lyric
 - **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
-- **Page formats** — Small, Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
+- **Page formats** — Small (the default), Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
 - **PDF Design Studio** — design how sheets look, opened from the ⚙ icon beside the version in the home header:
-  - Sliders for chord & lyric size (10-42pt, starting at the Small preset), **line spacing** (the lyric-to-lyric distance — the chord is always centred in it), lyric line height, and stanza gap
-  - A **wrap-width slider** with a red guide rule drawn right on the preview page — drag it and watch exactly where lines wrap
+  - Six steppers: **chord size** and **lyric size** (10-42pt, starting at the Small preset), **offset** (slides every chord up or down inside the white space between the lyric lines, so you can pull a chord closer to its own word), **height** (lyric-only line height), **gap** (blank line between stanzas), and **wrap** (how much of the page width a line may use)
+  - A red guide rule is drawn on the preview page at the column where lines wrap — drag Wrap and watch exactly where they break
   - A **zoomable preview**: use the zoom slider or pinch with two fingers (the slider follows your pinch), then pan left/right and up/down to inspect closely
   - Previews against Pink Floyd's "Pigs on the Wing" (fetched from Ultimate Guitar, with an offline stand-in chart)
-  - **Save** prompts for a name; the layout becomes the default and shows up by that name in the PDF format list on the viewer screen. **Reset** returns to the shipped Small-based defaults
+  - Opens on your **last saved layout**, so tuning continues where you left off
+  - **Save** prompts for a name; the layout becomes the app-wide default for every sheet generated from then on, and shows up by that name in the PDF format list on the viewer screen
+  - **Reset** returns to the **Small** preset, and makes Small the default again — Small stays a preset in the format list either way, and your test song and saved layout names are kept
 - **Recent Search History** — the home screen remembers your last 25 lookups under a pinned header; tap one to search Ultimate Guitar again in one tap, or clear the whole list with the trash button
 - **"Listen on YouTube"** — the app finds a matching video for the song automatically:
   - Tap the bar in the viewer to hear the song while you play

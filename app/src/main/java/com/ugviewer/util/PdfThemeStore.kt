@@ -1,6 +1,8 @@
 package com.ugviewer.util
 
 import android.content.Context
+import com.google.gson.Gson
+import com.ugviewer.api.TabResult
 
 /**
  * Persists the layout the Layout Studio saved as "how sheets should look from
@@ -11,15 +13,33 @@ object PdfThemeStore {
 
     private const val PREFS_NAME = "pdf_layout_theme"
     private const val KEY_SAVED = "saved"
-    private const val KEY_CHORD_PITCH = "chordLinePitch"
     private const val KEY_PLAIN_ROW = "plainRowHeight"
     private const val KEY_STANZA_GAP = "stanzaGap"
     private const val KEY_WRAP_FRACTION = "wrapFraction"
+    private const val KEY_CHORD_OFFSET = "chordOffset"
     private const val KEY_CHORD_SIZE = "chordFontSize"
     private const val KEY_LYRIC_SIZE = "lyricFontSize"
 
     /** The saved layout, or null when the user has never saved one. */
     data class Saved(val theme: PdfGenerator.PdfTheme, val chordSize: Float, val lyricSize: Float)
+
+    /**
+     * What the app ships with, and what the Studio's Reset returns to: the
+     * Small preset's sizes on the default spacing.
+     *
+     * It is stored rather than merely assumed, so a reset reaches the viewer's
+     * sheets down the same path a save does. Small itself stays a preset in the
+     * format menu either way — this is the app's default layout, not a
+     * replacement for it.
+     */
+    val SHIPPED = Saved(
+        theme = PdfGenerator.PdfTheme.DEFAULT,
+        chordSize = PdfGenerator.CHORD_SMALL_PT,
+        lyricSize = PdfGenerator.LYRIC_SMALL_PT
+    )
+
+    /** True when [saved] is the shipped Small layout rather than a tuned one. */
+    fun isShipped(saved: Saved): Boolean = saved == SHIPPED
 
     fun load(context: Context): Saved? {
         return try {
@@ -27,11 +47,13 @@ object PdfThemeStore {
             if (!prefs.getBoolean(KEY_SAVED, false)) return null
             val d = PdfGenerator.PdfTheme.DEFAULT
             Saved(
+                // chordLinePitch is not a knob any more, so it keeps the shipped
+                // default rather than a stale value from an older save.
                 theme = PdfGenerator.PdfTheme(
-                    chordLinePitch = prefs.getFloat(KEY_CHORD_PITCH, d.chordLinePitch),
                     plainRowHeight = prefs.getFloat(KEY_PLAIN_ROW, d.plainRowHeight),
                     stanzaGap = prefs.getFloat(KEY_STANZA_GAP, d.stanzaGap),
-                    wrapFraction = prefs.getFloat(KEY_WRAP_FRACTION, d.wrapFraction)
+                    wrapFraction = prefs.getFloat(KEY_WRAP_FRACTION, d.wrapFraction),
+                    chordOffset = prefs.getFloat(KEY_CHORD_OFFSET, d.chordOffset)
                 ),
                 chordSize = prefs.getFloat(KEY_CHORD_SIZE, PdfGenerator.DEFAULT_FONT_SIZE),
                 lyricSize = prefs.getFloat(KEY_LYRIC_SIZE, PdfGenerator.DEFAULT_FONT_SIZE)
@@ -52,10 +74,10 @@ object PdfThemeStore {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
             putBoolean(KEY_SAVED, true)
             putString(KEY_NAME, name)
-            putFloat(KEY_CHORD_PITCH, theme.chordLinePitch)
             putFloat(KEY_PLAIN_ROW, theme.plainRowHeight)
             putFloat(KEY_STANZA_GAP, theme.stanzaGap)
             putFloat(KEY_WRAP_FRACTION, theme.wrapFraction)
+            putFloat(KEY_CHORD_OFFSET, theme.chordOffset)
             putFloat(KEY_CHORD_SIZE, chordSize)
             putFloat(KEY_LYRIC_SIZE, lyricSize)
             apply()
@@ -89,9 +111,23 @@ object PdfThemeStore {
 
     private const val KEY_NAME = "name"
     private const val KEY_NAMED_LIST = "named_layouts"
+    private const val KEY_DEFAULT_TEST_SONG = "default_test_song"
 
-    /** Removes the saved layout; sheets go back to the shipped defaults. */
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()
+    fun saveDefaultTestSong(context: Context, tab: TabResult) {
+        val json = Gson().toJson(tab)
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DEFAULT_TEST_SONG, json)
+            .apply()
+    }
+
+    fun loadDefaultTestSong(context: Context): TabResult? {
+        return try {
+            val json = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_DEFAULT_TEST_SONG, null) ?: return null
+            Gson().fromJson(json, TabResult::class.java)
+        } catch (e: Exception) {
+            null
+        }
     }
 }

@@ -82,10 +82,14 @@ object PdfGenerator {
      * The visual rhythm of a chord sheet, in multiples of the 10pt base size.
      *
      * [chordLinePitch] is the distance from one lyric line's baseline to the
-     * next (across the chord band). The chord is ALWAYS drawn exactly halfway
-     * between the two lyric lines — centring is a guarantee, not a setting —
-     * so this one number is how close together the top and bottom lyric lines
-     * sit.
+     * next (across the chord band): this is how close together the top and
+     * bottom lyric lines sit.
+     *
+     * [chordOffset] slides the chord name up or down inside the white space
+     * between the two lyric lines, in multiples of the chord font size: 0 is
+     * the vertically centred default, negative moves the chord up towards the
+     * line above, positive moves it down towards its own lyric. This is what
+     * lets a chord sit closer to the word it belongs to.
      *
      * [plainRowHeight] governs lyric-only lines and [stanzaGap] the blank-line
      * spacing between sections. [wrapFraction] decides how much of the page
@@ -97,7 +101,8 @@ object PdfGenerator {
         val chordLinePitch: Float = 1.5f,
         val plainRowHeight: Float = 1.2f,
         val stanzaGap: Float = 0.6f,
-        val wrapFraction: Float = 1.0f
+        val wrapFraction: Float = 1.0f,
+        val chordOffset: Float = 0.0f
     ) {
         companion object {
             /** The shipped default: snug, with the chord centred as always. */
@@ -138,17 +143,18 @@ object PdfGenerator {
                 // BASELINES. The row is not symmetric around its middle: the
                 // bottom lyric baseline sits a descender's height above the row
                 // bottom and the top one the same distance below the row top,
-                // so the true midpoint is h/2 - d, not h/2. Centring is
-                // geometry — no slider can de-centre it. When the fonts are too
+                // so the true midpoint is h/2 - d, not h/2. When the fonts are too
                 // big for the chosen pitch, the ROW GROWS to the ink-clearance
                 // minimum (see [minimumChordRowHeight]) instead of the chord
-                // moving or touching either lyric line.
+                // moving or touching either lyric line. [PdfTheme.chordOffset]
+                // then shifts that centred baseline up or down on purpose.
                 val chordRowHeight = maxOf(
                     theme.chordLinePitch * BASE_FONT_SIZE * maxOf(kc, kl),
                     minimumChordRowHeight(chordSize, lyricSize)
                 )
                 val lyricBaseline = chordRowHeight - DESCENDER * BASE_FONT_SIZE * kl
-                val chordBaseline = lyricBaseline - chordRowHeight / 2f
+                val chordBaseline = lyricBaseline - chordRowHeight / 2f +
+                    (theme.chordOffset * BASE_FONT_SIZE * kc)
                 return PdfStyle(
                     chordFontSize = chordSize,
                     lyricFontSize = lyricSize,
@@ -749,7 +755,27 @@ object PdfGenerator {
         while (start < text.length) {
             val end = minOf(start + maxCols, text.length)
             var cut = end
-            if (end < text.length) {
+
+            // Check if any chord relative to start extends past maxCols.
+            var maxChordCut = cut
+            for ((off, name) in chords) {
+                if (off >= start) {
+                    val relOff = off - start
+                    val relEnd = relOff + name.length
+                    if (relOff < maxCols && relEnd > maxCols) {
+                        val spaceBefore = text.lastIndexOf(' ', off - 1)
+                        if (spaceBefore > start) {
+                            maxChordCut = minOf(maxChordCut, spaceBefore)
+                        } else if (off > start) {
+                            maxChordCut = minOf(maxChordCut, off)
+                        }
+                    }
+                }
+            }
+
+            if (maxChordCut < cut) {
+                cut = maxChordCut
+            } else if (end < text.length) {
                 val lastSpace = text.lastIndexOf(' ', end - 1)
                 if (lastSpace > start) cut = lastSpace
                 // Chord-aware adjustment: never cut through a chord name.
@@ -761,6 +787,12 @@ object PdfGenerator {
                     }
                 }
             }
+
+            if (cut <= start) {
+                // Prevent infinite loop if cut cannot move back before start.
+                cut = end
+            }
+
             result.add(start to text.substring(start, cut))
             start = if (cut < text.length && text[cut] == ' ') cut + 1 else cut
         }

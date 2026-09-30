@@ -2,11 +2,17 @@ package com.ugviewer.viewmodel
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ugviewer.api.SearchTab
 import com.ugviewer.api.TabResult
 import com.ugviewer.api.UGApiClient
 import com.ugviewer.util.PdfGenerator
@@ -40,15 +46,32 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     var isLoadingDemo by mutableStateOf(true)
         private set
 
+    /** Controls whether the initial "Default" or "New" popup is showing. */
+    var showPromptDialog by mutableStateOf(true)
+
+    /** Controls whether the search dialog for picking a new test song is open. */
+    var showSearchDialog by mutableStateOf(false)
+
+    var searchQuery by mutableStateOf("")
+    var searchResults by mutableStateOf<List<SearchTab>>(emptyList())
+        private set
+    var isSearchingSongs by mutableStateOf(false)
+        private set
+
     /** The demo sheet's content, loaded once. */
     private var demo: TabResult? = null
 
-    // The seven knobs. Sizes start at the Small preset: it is the layout the
-    // sheets read best at, and the shipped 32pt start only showed off how
-    // badly centred chords collide with the line above.
+    val currentSongTitle: String
+        get() = demo?.let { "${it.songName} (${it.artistName})" }
+            ?: PdfThemeStore.loadDefaultTestSong(getApplication())?.let { "${it.songName} (${it.artistName})" }
+            ?: "Pigs on the Wing (Pink Floyd)"
+
+    // The six knobs. These start at the shipped values and are then pointed at
+    // the last saved layout in [init], so the Studio always opens on the layout
+    // that is actually in force.
     var chordSize by mutableStateOf(PdfGenerator.CHORD_SMALL_PT)
     var lyricSize by mutableStateOf(PdfGenerator.LYRIC_SMALL_PT)
-    var chordLinePitch by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.chordLinePitch)
+    var chordOffset by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.chordOffset)
     var plainRowHeight by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.plainRowHeight)
     var stanzaGap by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.stanzaGap)
     var wrapFraction by mutableStateOf(PdfGenerator.PdfTheme.DEFAULT.wrapFraction)
@@ -63,34 +86,116 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     private var renderJob: Job? = null
 
     init {
-        hasSavedLayout = PdfThemeStore.load(application) != null
-        loadDemo()
+        // Open on the last save, not on the shipped values: this Studio view is
+        // the editor for the app-wide default, so it has to start from that
+        // default rather than from a blank sheet the user has to re-tune.
+        PdfThemeStore.load(application)?.let { saved ->
+            // The shipped Small layout is a reset, not a tuned save, so it must
+            // not report the Studio as holding a saved layout.
+            hasSavedLayout = !PdfThemeStore.isShipped(saved)
+            applyLayout(saved.theme, saved.chordSize, saved.lyricSize)
+        }
+        loadDefaultSong()
     }
 
-    /** Fetches a real chord chart to preview against, once, at startup. */
-    private fun loadDemo() {
+    /**
+     * Points every knob at one layout: the values the Studio shows, previews and
+     * saves. Shared by loading the last save and by Reset, which hands back the
+     * shipped sizes along with the shipped spacing.
+     */
+    private fun applyLayout(theme: PdfGenerator.PdfTheme, chord: Float, lyric: Float) {
+        chordSize = chord
+        lyricSize = lyric
+        chordOffset = theme.chordOffset
+        plainRowHeight = theme.plainRowHeight
+        stanzaGap = theme.stanzaGap
+        wrapFraction = theme.wrapFraction
+    }
+
+    /** Loads the default test song from preferences or network fallback. */
+    fun loadDefaultSong() {
         isLoadingDemo = true
+        showPromptDialog = false
         viewModelScope.launch {
             try {
-                val api = UGApiClient()
-                val response = withContext(Dispatchers.IO) {
-                    api.search("Pigs on the Wing Pink Floyd")
-                }
-                val first = response.tabs.firstOrNull { it.type.equals("Chords", ignoreCase = true) }
-                    ?: response.tabs.firstOrNull()
-                demo = if (first == null) {
-                    errorMessage = "Could not reach Ultimate Guitar; showing the built-in demo song."
-                    builtInDemo()
+                val saved = PdfThemeStore.loadDefaultTestSong(getApplication())
+                if (saved != null) {
+                    demo = saved
                 } else {
-                    withContext(Dispatchers.IO) { api.getTabById(first.id) }
+                    val api = UGApiClient()
+                    val response = withContext(Dispatchers.IO) {
+                        api.search("Pigs on the Wing Pink Floyd")
+                    }
+                    val first = response.tabs.firstOrNull { it.type.equals("Chords", ignoreCase = true) }
+                        ?: response.tabs.firstOrNull()
+                    demo = if (first == null) {
+                        builtInDemo()
+                    } else {
+                        withContext(Dispatchers.IO) { api.getTabById(first.id) }
+                    }
+                    demo?.let { PdfThemeStore.saveDefaultTestSong(getApplication(), it) }
                 }
             } catch (e: Exception) {
                 demo = builtInDemo()
                 errorMessage = "Offline: showing the built-in demo song."
             } finally {
+                renderCurrentDemo()
                 isLoadingDemo = false
-                scheduleRender()
             }
+        }
+    }
+
+    /** Searches Ultimate Guitar for a song to use as the test PDF. */
+    fun searchSongs(query: String) {
+        if (query.isBlank()) return
+        isSearchingSongs = true
+        viewModelScope.launch {
+            try {
+                val api = UGApiClient()
+                val response = withContext(Dispatchers.IO) {
+                    api.search(query)
+                }
+                searchResults = response.tabs
+            } catch (e: Exception) {
+                errorMessage = "Search failed: ${e.message}"
+            } finally {
+                isSearchingSongs = false
+            }
+        }
+    }
+
+    /** Selects a new song from search, sets it as default, and renders preview. */
+    fun selectNewSong(selectedTab: com.ugviewer.api.SearchTab) {
+        isLoadingDemo = true
+        showSearchDialog = false
+        showPromptDialog = false
+        viewModelScope.launch {
+            try {
+                val api = UGApiClient()
+                val fullTab = withContext(Dispatchers.IO) { api.getTabById(selectedTab.id) }
+                demo = fullTab
+                PdfThemeStore.saveDefaultTestSong(getApplication(), fullTab)
+            } catch (e: Exception) {
+                errorMessage = "Failed to load selected song: ${e.message}"
+            } finally {
+                renderCurrentDemo()
+                isLoadingDemo = false
+            }
+        }
+    }
+
+    private suspend fun renderCurrentDemo() {
+        val source = demo ?: builtInDemo()
+        try {
+            val format = PdfGenerator.PdfFormat.Custom(chordSize, lyricSize)
+            val bytes = withContext(Dispatchers.Default) {
+                PdfGenerator.generatePdfToBytes(source, null, format, theme)
+            }
+            val pages = withContext(Dispatchers.IO) { rasterise(bytes) }
+            val guided = pages.map { drawWrapGuide(it, theme.wrapFraction) }
+            previewPages = guided
+        } catch (e: Exception) {
+            errorMessage = "Render failed: ${e.message}"
         }
     }
 
@@ -131,8 +236,14 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
         applicature = emptyList()
     )
 
+    /** The line pitch is fixed: the Studio only tunes the other four rhythm knobs. */
     private val theme: PdfGenerator.PdfTheme
-        get() = PdfGenerator.PdfTheme(chordLinePitch, plainRowHeight, stanzaGap, wrapFraction)
+        get() = PdfGenerator.PdfTheme(
+            plainRowHeight = plainRowHeight,
+            stanzaGap = stanzaGap,
+            wrapFraction = wrapFraction,
+            chordOffset = chordOffset
+        )
 
     /** Queues a re-render; rapid slider moves collapse into one render. */
     fun scheduleRender() {
@@ -147,8 +258,6 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
                     PdfGenerator.generatePdfToBytes(source, null, format, theme)
                 }
                 val pages = withContext(Dispatchers.IO) { rasterise(bytes) }
-                // Draw the wrap guide on every page: a red rule where lines
-                // wrap, so the slider's effect is visible without guessing.
                 val guided = pages.map { drawWrapGuide(it, theme.wrapFraction) }
                 previewPages = guided
             } catch (e: Exception) {
@@ -166,12 +275,12 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
      * preview bitmaps only, never in a saved PDF.
      */
     private fun drawWrapGuide(page: Bitmap, wrapFraction: Float): Bitmap {
-        val canvas = android.graphics.Canvas(page)
-        val scale = page.width / 892f * 1.5f // page.width is already RENDER_SCALE * 595
+        val canvas = Canvas(page)
+        val scale = page.width / 892f * 1.5f
         val x = (PdfGenerator.MARGIN_LEFT +
             (PdfGenerator.PAGE_WIDTH - 2 * PdfGenerator.MARGIN_LEFT) * wrapFraction) * scale
-        val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.argb(160, 229, 57, 53)
+        val paint = Paint().apply {
+            color = Color.argb(160, 229, 57, 53)
             strokeWidth = 1.6f * scale
             isAntiAlias = true
         }
@@ -189,8 +298,8 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
         val tempFile = File.createTempFile("studio", ".pdf")
         return try {
             FileOutputStream(tempFile).use { it.write(pdf) }
-            val pfd = android.os.ParcelFileDescriptor.open(tempFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
-            val renderer = android.graphics.pdf.PdfRenderer(pfd)
+            val pfd = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = PdfRenderer(pfd)
             try {
                 (0 until renderer.pageCount).map { index ->
                     renderer.openPage(index).use { page ->
@@ -199,8 +308,8 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
                             (page.height * RENDER_SCALE).toInt().coerceAtLeast(1),
                             Bitmap.Config.ARGB_8888
                         )
-                        bitmap.eraseColor(android.graphics.Color.WHITE)
-                        page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        bitmap.eraseColor(Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                         bitmap
                     }
                 }
@@ -237,18 +346,20 @@ class LayoutStudioViewModel(application: Application) : AndroidViewModel(applica
     /** Saved layouts by name, for the viewer's format menu. */
     fun namedLayouts(): List<String> = PdfThemeStore.namedList(getApplication())
 
-    /** Throws away the saved layout; sheets return to the shipped defaults. */
+    /**
+     * Throws the tuned layout away: sheets, and this Studio's own knobs, go
+     * back to the shipped Small preset.
+     *
+     * The Small layout is saved rather than the store cleared, so the viewer
+     * receives it the same way it receives a save — and so the chosen test song
+     * and the named-layout list survive the reset.
+     */
     fun resetToShipped() {
         val app = getApplication<Application>()
-        PdfThemeStore.clear(app)
+        val shipped = PdfThemeStore.SHIPPED
+        PdfThemeStore.save(app, shipped.theme, shipped.chordSize, shipped.lyricSize)
         hasSavedLayout = false
-        chordSize = PdfGenerator.CHORD_SMALL_PT
-        lyricSize = PdfGenerator.LYRIC_SMALL_PT
-        val d = PdfGenerator.PdfTheme.DEFAULT
-        chordLinePitch = d.chordLinePitch
-        plainRowHeight = d.plainRowHeight
-        stanzaGap = d.stanzaGap
-        wrapFraction = d.wrapFraction
+        applyLayout(shipped.theme, shipped.chordSize, shipped.lyricSize)
         scheduleRender()
     }
 }

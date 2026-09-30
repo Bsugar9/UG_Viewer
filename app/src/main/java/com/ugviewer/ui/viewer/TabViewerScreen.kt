@@ -1104,18 +1104,20 @@ fun PdfFontSizeBar(
                 }
 
                 if (custom != null) {
-                    IconButton(
+                    OutlinedButton(
                         onClick = { customPanelExpanded = !customPanelExpanded },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Accent)
+                        modifier = Modifier.height(40.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Accent,
+                            contentColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(
-                            imageVector = if (customPanelExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (customPanelExpanded) "Hide font settings" else "Show font settings",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(20.dp)
+                        Text(
+                            text = if (customPanelExpanded) "Hide" else "Sizes",
+                            fontSize = PDF_BAR_LABEL_SP.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

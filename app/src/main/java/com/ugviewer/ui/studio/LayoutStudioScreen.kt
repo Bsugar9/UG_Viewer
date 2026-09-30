@@ -1,43 +1,68 @@
 package com.ugviewer.ui.studio
 
-import android.graphics.Bitmap
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.ugviewer.ui.theme.*
+import com.ugviewer.ui.theme.Accent
+import com.ugviewer.ui.theme.ChordYellow
+import com.ugviewer.ui.theme.DarkBg
+import com.ugviewer.ui.theme.Highlight
+import com.ugviewer.ui.theme.Surface
+import com.ugviewer.ui.theme.TextPrimary
+import com.ugviewer.ui.theme.TextSecondary
+import com.ugviewer.ui.viewer.PdfPagesPreview
 import com.ugviewer.viewmodel.LayoutStudioViewModel
-import kotlinx.coroutines.withContext
 
 /**
- * PDF Design Studio: tune how chord sheets look — font sizes, chord
- * placement, and where lines wrap (with a visible guide rule on the page) —
- * against a live preview, then save it as the default every future sheet
- * uses.
+ * PDF Design Studio: tune chord size, lyric size, chord offset within its
+ * white space, row height, stanza gap, and wrap width using compact up/down
+ * steppers with a live, real-time PDF preview right below without requiring
+ * scrolling.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +70,8 @@ fun LayoutStudioScreen(
     onBack: () -> Unit,
     viewModel: LayoutStudioViewModel = viewModel()
 ) {
+    var showNamePrompt by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -74,263 +101,431 @@ fun LayoutStudioScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
             if (viewModel.errorMessage != null) {
                 Text(
                     text = viewModel.errorMessage!!,
                     color = ChordYellow,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(bottom = 4.dp)
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
 
+            // Compact 2-column control grid
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Drag a slider — the sheet re-renders as you go.",
-                    fontSize = 12.sp,
-                    color = TextSecondary,
+                // Left Column Controls
+                Column(
                     modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (viewModel.isRendering) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Highlight
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    StudioStepper(
+                        label = "Chords",
+                        valueText = "${viewModel.chordSize.toInt()}pt",
+                        onDecrement = {
+                            viewModel.chordSize = (viewModel.chordSize - 1f).coerceIn(10f, 42f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.chordSize = (viewModel.chordSize + 1f).coerceIn(10f, 42f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.chordSize > 10f,
+                        canIncrement = viewModel.chordSize < 42f
+                    )
+
+                    StudioStepper(
+                        label = "Lyrics",
+                        valueText = "${viewModel.lyricSize.toInt()}pt",
+                        onDecrement = {
+                            viewModel.lyricSize = (viewModel.lyricSize - 1f).coerceIn(10f, 42f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.lyricSize = (viewModel.lyricSize + 1f).coerceIn(10f, 42f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.lyricSize > 10f,
+                        canIncrement = viewModel.lyricSize < 42f
+                    )
+
+                    StudioStepper(
+                        label = "Offset",
+                        valueText = "%.2f".format(viewModel.chordOffset),
+                        onDecrement = {
+                            viewModel.chordOffset = (viewModel.chordOffset - 0.05f).coerceIn(-1.0f, 1.0f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.chordOffset = (viewModel.chordOffset + 0.05f).coerceIn(-1.0f, 1.0f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.chordOffset > -1.0f,
+                        canIncrement = viewModel.chordOffset < 1.0f
+                    )
+                }
+
+                // Right Column Controls
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    StudioStepper(
+                        label = "Height",
+                        valueText = "%.2f".format(viewModel.plainRowHeight),
+                        onDecrement = {
+                            viewModel.plainRowHeight = (viewModel.plainRowHeight - 0.05f).coerceIn(0.9f, 1.8f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.plainRowHeight = (viewModel.plainRowHeight + 0.05f).coerceIn(0.9f, 1.8f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.plainRowHeight > 0.9f,
+                        canIncrement = viewModel.plainRowHeight < 1.8f
+                    )
+
+                    StudioStepper(
+                        label = "Gap",
+                        valueText = "%.2f".format(viewModel.stanzaGap),
+                        onDecrement = {
+                            viewModel.stanzaGap = (viewModel.stanzaGap - 0.05f).coerceIn(0.3f, 1.5f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.stanzaGap = (viewModel.stanzaGap + 0.05f).coerceIn(0.3f, 1.5f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.stanzaGap > 0.3f,
+                        canIncrement = viewModel.stanzaGap < 1.5f
+                    )
+
+                    StudioStepper(
+                        label = "Wrap",
+                        valueText = "${(viewModel.wrapFraction * 100).toInt()}%",
+                        onDecrement = {
+                            viewModel.wrapFraction = (viewModel.wrapFraction - 0.05f).coerceIn(0.4f, 1f)
+                            viewModel.scheduleRender()
+                        },
+                        onIncrement = {
+                            viewModel.wrapFraction = (viewModel.wrapFraction + 0.05f).coerceIn(0.4f, 1f)
+                            viewModel.scheduleRender()
+                        },
+                        canDecrement = viewModel.wrapFraction > 0.4f,
+                        canIncrement = viewModel.wrapFraction < 1f
                     )
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Action row with Song, Reset, and Save
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StudioSlider(
-                    label = "Chord size",
-                    value = viewModel.chordSize,
-                    valueText = "${viewModel.chordSize.toInt()}pt",
-                    range = 10f..42f,
-                    onChange = {
-                        viewModel.chordSize = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Lyric size",
-                    value = viewModel.lyricSize,
-                    valueText = "${viewModel.lyricSize.toInt()}pt",
-                    range = 10f..42f,
-                    onChange = {
-                        viewModel.lyricSize = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Line spacing (top and bottom lyric lines)",
-                    value = viewModel.chordLinePitch,
-                    valueText = "%.2f".format(viewModel.chordLinePitch),
-                    range = 0.9f..2.8f,
-                    onChange = {
-                        viewModel.chordLinePitch = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Lyric line height",
-                    value = viewModel.plainRowHeight,
-                    valueText = "%.2f".format(viewModel.plainRowHeight),
-                    range = 0.9f..1.8f,
-                    onChange = {
-                        viewModel.plainRowHeight = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Stanza gap",
-                    value = viewModel.stanzaGap,
-                    valueText = "%.2f".format(viewModel.stanzaGap),
-                    range = 0.3f..1.5f,
-                    onChange = {
-                        viewModel.stanzaGap = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                StudioSlider(
-                    label = "Wrap width (% of page used before lines wrap)",
-                    value = viewModel.wrapFraction,
-                    valueText = "${(viewModel.wrapFraction * 100).toInt()}%",
-                    range = 0.4f..1f,
-                    onChange = {
-                        viewModel.wrapFraction = it
-                        viewModel.scheduleRender()
-                    }
-                )
-                Text(
-                    text = "The red rule on the preview marks the wrap column.",
-                    fontSize = 11.sp,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                var showNamePrompt by remember { mutableStateOf(false) }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        onClick = { viewModel.resetToShipped() },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
+                        onClick = { viewModel.showPromptDialog = true },
+                        modifier = Modifier.height(32.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             containerColor = Accent,
                             contentColor = TextPrimary
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Reset", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                        Text("Song", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
+
+                    OutlinedButton(
+                        onClick = { viewModel.resetToShipped() },
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Accent,
+                            contentColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Reset", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+
                     Button(
                         onClick = { showNamePrompt = true },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp),
+                        modifier = Modifier.height(32.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Highlight),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                        Text("Save", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
 
-                if (showNamePrompt) {
-                    SaveLayoutDialog(
-                        defaultName = viewModel.suggestedLayoutName(),
-                        onConfirm = { name ->
-                            viewModel.saveNamedLayout(name)
-                            showNamePrompt = false
-                        },
-                        onDismiss = { showNamePrompt = false }
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (viewModel.isRendering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Highlight
+                        )
+                    }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(12.dp))
+            // Initial Popup Prompt Dialog: Default or New
+            if (viewModel.showPromptDialog) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.showPromptDialog = false },
+                    title = { Text("Select Test PDF", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                    text = {
+                        Column {
+                            Text(
+                                "Choose a song to preview layout adjustments against.",
+                                fontSize = 13.sp,
+                                color = TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "Current Default:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Highlight
+                            )
+                            Text(
+                                viewModel.currentSongTitle,
+                                fontSize = 13.sp,
+                                color = TextPrimary
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { viewModel.loadDefaultSong() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Highlight),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Default", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.showPromptDialog = false
+                                viewModel.showSearchDialog = true
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("New", fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    containerColor = Surface
+                )
+            }
 
+            // Song Search Dialog when "New" is selected
+            if (viewModel.showSearchDialog) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.showSearchDialog = false },
+                    title = { Text("Search New Test Song", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                    text = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = viewModel.searchQuery,
+                                    onValueChange = { viewModel.searchQuery = it },
+                                    placeholder = { Text("Artist or song name...", fontSize = 12.sp) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    textStyle = TextStyle(fontSize = 13.sp, color = TextPrimary)
+                                )
+                                Button(
+                                    onClick = { viewModel.searchSongs(viewModel.searchQuery) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Highlight),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Search", fontSize = 12.sp)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (viewModel.isSearchingSongs) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = Highlight)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 240.dp)
+                                ) {
+                                    items(viewModel.searchResults) { tab ->
+                                        Card(
+                                            onClick = { viewModel.selectNewSong(tab) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            colors = CardDefaults.cardColors(containerColor = DarkBg)
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                Text(
+                                                    tab.songName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = TextPrimary
+                                                )
+                                                Text(
+                                                    "${tab.artistName} • ${tab.type}",
+                                                    fontSize = 11.sp,
+                                                    color = TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        OutlinedButton(onClick = { viewModel.showSearchDialog = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                    containerColor = Surface
+                )
+            }
+
+            if (showNamePrompt) {
+                SaveLayoutDialog(
+                    defaultName = viewModel.suggestedLayoutName(),
+                    onConfirm = { name ->
+                        viewModel.saveNamedLayout(name)
+                        showNamePrompt = false
+                    },
+                    onDismiss = { showNamePrompt = false }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Live PDF Preview Area filling all remaining vertical space
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
                 if (viewModel.isLoadingDemo) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp),
+                        modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator(color = Highlight)
                     }
                 } else {
-                    StudioPreviewArea(
-                        pages = viewModel.previewPages
+                    PdfPagesPreview(
+                        pages = viewModel.previewPages,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A compact stepper control with a 1-word label, value display, and - / + arrow buttons.
+ */
+@Composable
+private fun StudioStepper(
+    label: String,
+    valueText: String,
+    onDecrement: () -> Unit,
+    onIncrement: () -> Unit,
+    canDecrement: Boolean,
+    canIncrement: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = DarkBg,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Accent.copy(alpha = 0.6f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextSecondary,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.weight(1f)
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                IconButton(
+                    onClick = onDecrement,
+                    enabled = canDecrement,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Decrease $label",
+                        tint = if (canDecrement) TextPrimary else TextSecondary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(15.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
+                Text(
+                    text = valueText,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Highlight,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
 
-/**
- * The zoomable preview: a slider sets the zoom, and a two-finger pinch sets
- * it too — each updates the same state, so the slider handle moves along when
- * the fingers do. Single-finger drags scroll; two-finger pinches zoom, caught
- * in the initial pointer pass so they win over the scroll.
- */
-@Composable
-private fun StudioPreviewArea(pages: List<Bitmap>) {
-    var zoom by remember { mutableFloatStateOf(1f) }
-    val vertical = rememberScrollState()
-    val horizontal = rememberScrollState()
-    // The unzoomed width of the page column, so the scrollable content width
-    // can grow exactly with zoom.
-    var pageContentWidthDp by remember { mutableStateOf(360.dp) }
-    val density = androidx.compose.ui.platform.LocalDensity.current
-
-    Column {
-        StudioSlider(
-            label = "Preview zoom",
-            value = zoom,
-            valueText = "${(zoom * 100).toInt()}%",
-            range = 1f..4f,
-            onChange = { zoom = it }
-        )
-
-        // Measure the natural (unzoomed) content width for the panning math.
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            pageContentWidthDp = with(density) { maxWidth }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(420.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .verticalScroll(vertical)
-                .horizontalScroll(horizontal)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        do {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.size >= 2) {
-                                val newZoom = (zoom * event.calculateZoom())
-                                    .coerceIn(1f, 4f)
-                                if (newZoom != zoom) {
-                                    zoom = newZoom
-                                    event.changes.forEach { it.consume() }
-                                }
-                            }
-                        } while (event.changes.any { it.pressed })
-                    }
-                }
-        ) {
-            // Zoom scales the CONTENT, and the scroll area sizes itself to the
-            // scaled content — that is what makes horizontal panning work. A
-            // graphicsLayer transform alone never widens the scrollable area,
-            // which is why the page used to feel locked.
-            Column(
-                modifier = Modifier
-                    .requiredWidth(pageContentWidthDp * zoom)
-                    .graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        transformOrigin = TransformOrigin(0f, 0f)
-                    }
-            ) {
-                pages.forEachIndexed { index, bitmap ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(8.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                    ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Preview page ${index + 1}",
-                            modifier = Modifier.fillMaxWidth(),
-                            contentScale = ContentScale.FillWidth
-                        )
-                    }
+                IconButton(
+                    onClick = onIncrement,
+                    enabled = canIncrement,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Increase $label",
+                        tint = if (canIncrement) TextPrimary else TextSecondary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(15.dp)
+                    )
                 }
             }
         }
@@ -338,8 +533,7 @@ private fun StudioPreviewArea(pages: List<Bitmap>) {
 }
 
 /**
- * Asks the user what to call the layout being saved. The name becomes the
- * entry shown in the PDF format list on the viewer screen.
+ * Asks the user what to call the layout being saved.
  */
 @Composable
 private fun SaveLayoutDialog(
@@ -356,7 +550,7 @@ private fun SaveLayoutDialog(
                 value = name,
                 onValueChange = { name = it },
                 singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = TextPrimary)
+                textStyle = TextStyle(fontSize = 14.sp, color = TextPrimary)
             )
         },
         confirmButton = {
@@ -370,38 +564,4 @@ private fun SaveLayoutDialog(
         },
         containerColor = Surface
     )
-}
-
-@Composable
-private fun StudioSlider(
-    label: String,
-    value: Float,
-    valueText: String,
-    range: ClosedFloatingPointRange<Float>,
-    onChange: (Float) -> Unit
-) {
-    Column(modifier = Modifier.padding(vertical = 2.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(label, fontSize = 12.sp, color = TextSecondary)
-            Text(
-                valueText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Highlight
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = range,
-            colors = SliderDefaults.colors(
-                thumbColor = Highlight,
-                activeTrackColor = Highlight,
-                inactiveTrackColor = Accent
-            )
-        )
-    }
 }
