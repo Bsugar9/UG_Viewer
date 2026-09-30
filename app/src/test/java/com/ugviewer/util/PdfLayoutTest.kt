@@ -83,6 +83,35 @@ class PdfLayoutTest {
     }
 
     @Test
+    fun `an off-centre chord still clears the line below it`() {
+        // A theme that slides the chord down (or up) inside the band must not
+        // print the name on top of the lyric - or, on a chord-only row above a
+        // tab block, on top of the tab.
+        for (offset in listOf(-0.5f, 0f, 0.5f, 1f)) {
+            for (font in listOf(10.5f, 22f, 32f, 42f)) {
+                val offsetPx = offset * 10f * font / 10f
+                val row = PdfGenerator.minimumChordRowHeight(font, font, offsetPx)
+                val d = 0.35f * font
+                val prevLyricBaseline = -d
+                val thisLyricBaseline = row - d
+                // Same rule the generator uses: centred, then slid.
+                val chordBaseline = thisLyricBaseline - row / 2f + offsetPx
+                val chordTop = chordBaseline - 0.78f * font
+                val chordBottom = chordBaseline + 0.22f * font
+                val lyricTop = thisLyricBaseline - 0.72f * font
+                assertTrue(
+                    "offset=$offset font=$font: chord top $chordTop grazes the line above ($prevLyricBaseline)",
+                    chordTop >= prevLyricBaseline
+                )
+                assertTrue(
+                    "offset=$offset font=$font: chord bottom $chordBottom lands on the line below ($lyricTop)",
+                    chordBottom <= lyricTop
+                )
+            }
+        }
+    }
+
+    @Test
     fun `resolved chord xs never overlap each other`() {
         // Three chords charted one character apart: Gm7 is wider than the
         // spacing, so the resolver must push the later ones right.

@@ -28,7 +28,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -57,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ugviewer.ui.theme.*
+import com.ugviewer.chord.GuitarVoice
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.viewmodel.TabViewerViewModel
 
@@ -80,6 +83,12 @@ fun TabViewerScreen(
 
     LaunchedEffect(tabId) {
         viewModel.loadTab(tabId)
+    }
+
+    // A chord left ringing when the sheet is closed would follow the user off
+    // this screen, so leaving it silences the last chord.
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopChord() }
     }
 
     // The system folder picker: the user picks where sheets go, and Android
@@ -284,6 +293,10 @@ fun TabViewerScreen(
             chordName = viewModel.popupChordName,
             pages = viewModel.popupChordPages,
             isLoading = viewModel.popupChordLoading,
+            isPlaying = viewModel.isChordPlaying,
+            voice = viewModel.chordVoice,
+            onTogglePlayback = { viewModel.toggleChordPlayback() },
+            onToggleVoice = { viewModel.toggleChordVoice() },
             onDismiss = { viewModel.dismissChordPopup() }
         )
     }
@@ -367,6 +380,9 @@ fun PdfPreviewContent(
             val pdfX = pointInPage.x * PdfGenerator.PAGE_WIDTH / bitmap.width
             val pdfY = pointInPage.y * PdfGenerator.PAGE_HEIGHT / bitmap.height
             val hit = viewModel.chordAt(pageIndex + 1, pdfX, pdfY) ?: return@PdfPagesPreview
+            // Heard as well as seen: the tap sounds the chord in the tab's own
+            // tuning and capo, then shows the diagram for it.
+            viewModel.playChord(hit.name)
             viewModel.showChordPopup(hit.name)
         }
     )
@@ -381,12 +397,21 @@ fun PdfPreviewContent(
  * family page with the tapped chord's name on it first.
  *
  * Dismissed by a tap outside the card, the back gesture, or the Close button.
+ *
+ * The chord rings until Stop, and can be replayed from here without going back
+ * to the sheet and tapping it again: a single strum is easy to miss while your
+ * eyes are finding the shape on the diagram. The button beside it swaps between
+ * an acoustic and an electric guitar, and re-strums on the new one.
  */
 @Composable
 fun ChordDiagramPopup(
     chordName: String?,
     pages: List<Bitmap>,
     isLoading: Boolean,
+    isPlaying: Boolean = false,
+    voice: GuitarVoice = GuitarVoice.ACOUSTIC,
+    onTogglePlayback: () -> Unit = {},
+    onToggleVoice: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -418,6 +443,56 @@ fun ChordDiagramPopup(
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1A1A2E)
                     )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Replay sits under the name rather than beside it: the name is
+                // the widest thing in the card, and one full-width control
+                // cannot be squeezed by it. It is the primary action here, so it
+                // takes the highlighted box and Close steps back to an outline.
+                // The guitar sits next to it because the choice belongs beside
+                // the sound it changes rather than with the diagram.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onTogglePlayback,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PdfBarContentPadding,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Highlight,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isPlaying) "Stop" else "Play chord",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onToggleVoice,
+                        contentPadding = PdfBarContentPadding,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Accent,
+                            contentColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = voice.label,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -456,11 +531,12 @@ fun ChordDiagramPopup(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 OutlinedButton(
                     onClick = onDismiss,
                     modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PdfBarContentPadding,
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = Accent,
                         contentColor = TextPrimary

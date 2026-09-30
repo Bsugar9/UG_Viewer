@@ -16,8 +16,16 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - Four diagrams per row on A4, 16 per page, ready to print
   - Every page credits the [chords-db](https://github.com/tombatossals/chords-db) source (MIT)
 - **Chord charts** rendered as PDF with color-coded formatting
-- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below. The shipped default (offset 1.00, height 0.90, gap 0.30) puts each chord where you would draw it by hand, and the Studio's chord offset nudges it up or down further when a chord wants to sit closer to its own lyric
-- **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
+- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below. The shipped default (height 0.90, gap 0.30) puts each chord where you would draw it by hand, and the Studio's chord offset nudges it up or down further when a chord wants to sit closer to its own lyric
+  - A chord can never print on top of the line below it. The row is sized for where the chord is *actually* drawn, so a Studio layout that slides the chord off centre gets a taller row rather than a chord that lands on the lyric — or, on a chord-only line above a tab block, on top of the tab itself
+  - Every chord prints once, in red. A chord name is removed from the lyric text before it is drawn, so the same name can never appear twice, once black from the lyric row and once red from the chord row
+  - A creator's `*` is treated as a highlight rather than a wildcard: `D*`, `C*` and `G**` are recognised as D, C and G chords and coloured like any other
+- **Tap any chord to hear it and see its diagram** — tapping a chord name in the PDF preview sounds the chord *and* opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
+  - **Played in the tab's own tuning and capo**, so a drop-D song does not sound like the same song in E standard, and a capo'd chart is heard from the shape rather than the key
+  - **Real plucked-string synthesis**, not samples: each string is modelled as noise for the pick recirculating through a delay line one period long, with a low-pass that darkens the note as it fades and a pick position that gives the attack its edge
+  - **Acoustic or Electric**, switched in the popup. The two are the same model with different numbers — pick position, damping, decay and pick strength — plus the soundbox resonance that only the acoustic has, which is where its woody edge comes from
+  - **Keeps playing until you press Stop.** The chord is held at a steady level for the length of the loop and the loop seam is crossfaded, so it runs on instead of stopping and restarting
+  - The button replays the last chord without going back to the sheet, and switching guitar re-strums on the new one
 - **Page formats** — Small (the default), Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
   - The Custom dials can be **collapsed with one tap** (the ⚙ button in the bar), handing their height back to the sheet for reading instead of tuning
   - A saved Studio layout is re-applied every time you open a song, so a wrap or spacing change you tuned once sticks to every sheet that follows
@@ -87,7 +95,7 @@ If the Android SDK isn't at the default location, set its path in `local.propert
 
 ### Versioning
 
-The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.53**. The version shows in the app header beside the title.
+The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.54**. The version shows in the app header beside the title.
 
 ### Release signing
 
@@ -105,11 +113,13 @@ Without them `assembleRelease` still succeeds but falls back to the debug key, s
 
 ### Tests
 
-The chord-name matching, spoken-phrase parsing, PDF column layout, and the chord shape engine (barre realization, curated voicings, slash-chord handling) are covered by JVM unit tests:
+The chord-name matching, spoken-phrase parsing, PDF column layout, the chord shape engine (barre realization, curated voicings, slash-chord handling), and the chord audio engine are covered by JVM unit tests:
 
 ```
 gradlew.bat :app:testDebugUnitTest
 ```
+
+The audio tests render the real waveform rather than mocking it, because the things that go wrong in synthesis are inaudible in a passing build: that a string starts loud and is still sounding at the loop point, that the loop seam is a match rather than a click, that the output neither clips nor falls silent, and that the pitch recovers the frequency that was asked for by autocorrelation. The two guitars are compared on their plucked strings, so a toggle that relabelled the same tone would fail.
 
 ### Regenerating the chord data
 
@@ -126,6 +136,7 @@ python tools/fetch_chords_db.py
 - OkHttp for API calls
 - Gson for JSON parsing
 - Android PdfDocument / PdfRenderer for PDF generation and preview
+- Android AudioTrack for chord playback (synthesised, no bundled samples)
 - JUnit 4 for JVM unit tests
 
 ## Permissions

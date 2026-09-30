@@ -102,7 +102,7 @@ object PdfGenerator {
         val plainRowHeight: Float = 1.2f,
         val stanzaGap: Float = 0.3f,
         val wrapFraction: Float = 1.0f,
-        val chordOffset: Float = 1.0f
+        val chordOffset: Float = 0f
     ) {
         companion object {
             /** The shipped default: snug, with the chord visually centred between lyric lines. */
@@ -148,9 +148,15 @@ object PdfGenerator {
                 // minimum (see [minimumChordRowHeight]) instead of the chord
                 // moving or touching either lyric line. [PdfTheme.chordOffset]
                 // then shifts that centred baseline up or down on purpose.
+                // The row is sized for the chord where it is actually drawn.
+                // A theme that slides the chord off centre (chordOffset) needs
+                // more room on the side it moved towards, otherwise the name
+                // lands on the line below - on a tab block, straight on top of
+                // the tab.
+                val chordOffsetPx = theme.chordOffset * BASE_FONT_SIZE * kc
                 val chordRowHeight = maxOf(
                     theme.chordLinePitch * BASE_FONT_SIZE * maxOf(kc, kl),
-                    minimumChordRowHeight(chordSize, lyricSize)
+                    minimumChordRowHeight(chordSize, lyricSize, chordOffsetPx)
                 )
                 val lyricBaseline = chordRowHeight - DESCENDER * BASE_FONT_SIZE * kl
                 val chordBaseline = lyricBaseline - chordRowHeight / 2f +
@@ -189,27 +195,34 @@ object PdfGenerator {
     )
 
     /**
-     * The smallest chord+lyric row (in points) in which a centred chord name
-     * fits without its ink touching either neighbouring lyric line: half the
+     * The smallest chord+lyric row (in points) in which the chord name fits
+     * without its ink touching either neighbouring lyric line: half the
      * row must cover the chord's rise above its baseline plus the line-above's
      * descenders, and half must cover the lyric's capitals plus the chord's
-     * hang below its baseline. Exposed for tests.
+     * hang below its baseline. [offsetPx] is how far the theme has slid the
+     * chord off the centre of that band (positive is downwards); the room each
+     * half needs grows by the slide in the direction it moved, so a shifted
+     * chord gets a taller row instead of landing on the line below it.
+     * Exposed for tests.
      */
-    internal fun minimumChordRowHeight(chordFontSize: Float, lyricFontSize: Float): Float {
+    internal fun minimumChordRowHeight(
+        chordFontSize: Float,
+        lyricFontSize: Float,
+        offsetPx: Float = 0f
+    ): Float {
         val chordAscent = CHORD_ASCENT * chordFontSize
         val lyricDescender = DESCENDER * lyricFontSize
         val lyricCap = LYRIC_CAP * lyricFontSize
         val chordDescent = CHORD_DESCENT * chordFontSize
         // The centred chord baseline sits at h/2 - d (the lyric baselines'
-        // midpoint; the previous line's baseline is d ABOVE this row's top),
-        // so each half-row must cover, from that midpoint, with a pad:
-        //  - upward: chord ascent + the line-above's descender depth
-        //  - downward: chord descent + the lyric's cap height (the -d in the
-        //    midpoint cancels the descender allowance on this side)
+        // midpoint; the previous line's baseline is d ABOVE this row's top).
+        // A positive offset moves the chord down, so the lower half has to
+        // cover the slide as well; a negative one moves it up, and the upper
+        // half does.
         val pad = 0.12f * maxOf(chordFontSize, lyricFontSize)
         return 2f * maxOf(
-            chordAscent + lyricDescender,
-            chordDescent + lyricCap
+            chordAscent + lyricDescender - offsetPx,
+            chordDescent + lyricCap + offsetPx
         ) + 2f * pad
     }
 
@@ -255,10 +268,16 @@ object PdfGenerator {
     private fun isChordName(token: String): Boolean {
         if (token.isEmpty() || token.length > 12) return false
         if (token[0] !in 'A'..'G') return false
-        if (token.lowercase() in chordWordBlocklist) return false
+        // A trailing star is the creator's own highlight ("something special
+        // about this chord"), not a wildcard: D* is a D chord, so it is matched
+        // and coloured like any other, with the star kept in the drawn name.
+        val name = token.trimEnd('*')
+        if (name.isEmpty() || name.length > 12) return false
+        if (name[0] !in 'A'..'G') return false
+        if (name.lowercase() in chordWordBlocklist) return false
         var i = 1
-        if (i < token.length && (token[i] == '#' || token[i] == 'b')) i++
-        val quality = token.substring(i)
+        if (i < name.length && (name[i] == '#' || name[i] == 'b')) i++
+        val quality = name.substring(i)
         val slash = quality.indexOf('/')
         val main = if (slash >= 0) quality.substring(0, slash) else quality
         val tail = if (slash >= 0) quality.substring(slash + 1) else null
@@ -558,20 +577,26 @@ object PdfGenerator {
                 val rel = (off - parts[idx].first).coerceIn(0, (maxCols - m.value.length).coerceAtLeast(0))
                 chordLists[idx].add(rel to m.value)
             }
+            // Every chord name is blanked out of the lyric row, chord-only or
+            // not: leaving it there prints the same name twice, once in black
+            // from the lyric row and once in red on top of it.
+            val blanked = StringBuilder(trimmed)
+            for (m in tokens.asReversed()) {
+                if (isChordName(m.value)) for (k in m.range) blanked.setCharAt(k, ' ')
+            }
+            val lyric = blanked.toString()
             val segments = if (lyricWords == 0) {
-                // Pure chord line: blank the words in the lyric row so the red
-                // chord names are the only thing drawn there.
-                val blanked = StringBuilder(trimmed)
-                for (m in tokens.asReversed()) {
-                    if (isChordName(m.value)) for (k in m.range) blanked.setCharAt(k, ' ')
-                }
-                val lyric = blanked.toString()
+                // Pure chord line: the red chord names are the only thing
+                // drawn, so any leftover words keep their spacing trimmed off.
                 parts.mapIndexed { i, part ->
                     val segText = lyric.substring(part.first, part.first + part.second.length)
                     ChordSeg(chordLists[i].toList(), segText.trimEnd())
                 }
             } else {
-                parts.mapIndexed { i, (_, t) -> ChordSeg(chordLists[i].toList(), t) }
+                parts.mapIndexed { i, part ->
+                    val segText = lyric.substring(part.first, part.first + part.second.length)
+                    ChordSeg(chordLists[i].toList(), segText.trimEnd())
+                }
             }
             rows.add(PdfRow.ChordLyric(segments))
         }
@@ -668,9 +693,22 @@ object PdfGenerator {
                     } else {
                         sb.append(anyTagRegex.replace(tail, ""))
                     }
+                    // A chord name sitting outside the tags on a tagged line is
+                    // still a chord: it is promoted into the red row and
+                    // blanked from the lyric text, so the same name can never be
+                    // printed twice, once black and once red.
+                    val spanSet = nameSpans.toMutableSet()
+                    for (t in chordTokenRegex.findAll(sb)) {
+                        if (!isChordName(t.value)) continue
+                        if (nameSpans.any { (s, l) -> t.range.first >= s && t.range.first < s + l }) continue
+                        inline.add(t.range.first to t.value)
+                        spanSet.add(t.range.first to t.value.length)
+                    }
                     val residual = sb.toString()
                     // Text outside chord tags decides "chord-only line" status.
-                    val outsideText = anyTagRegex.replace(chPairRegex.replace(line, ""), "")
+                    val outsideText = residual.filterIndexed { i, c ->
+                        spanSet.none { (s, l) -> i >= s && i < s + l }
+                    }
                     when {
                         inline.isEmpty() -> addPlain(residual, isTabLine = inTabBlock)
                         outsideText.isBlank() -> pendingChords = inline
@@ -678,7 +716,7 @@ object PdfGenerator {
                             // Mixed chord+lyric line: blank out the chord names
                             // in the lyric row so they are not drawn twice.
                             val lyricSb = StringBuilder(residual)
-                            for ((start, len) in nameSpans.asReversed()) {
+                            for ((start, len) in spanSet.sortedByDescending { it.first }) {
                                 for (k in start until start + len) lyricSb.setCharAt(k, ' ')
                             }
                             // Slide each chord right past the blanked span onto

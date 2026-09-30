@@ -14,7 +14,10 @@ import androidx.lifecycle.viewModelScope
 import com.ugviewer.api.TabResult
 import com.ugviewer.api.UGApiClient
 import com.ugviewer.chord.ChordLibrary
+import com.ugviewer.chord.ChordPitch
+import com.ugviewer.chord.ChordPlayer
 import com.ugviewer.chord.ChordShapePdfGenerator
+import com.ugviewer.chord.GuitarVoice
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.util.PdfThemeStore
 import com.ugviewer.util.YouTubeHelper
@@ -74,6 +77,35 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     var chordHitMap by mutableStateOf(PdfGenerator.ChordHitMap.EMPTY)
         private set
 
+    /**
+     * True while a chord is sounding, so the play/stop button shows the state
+     * the audio is actually in rather than one the tap set some time ago.
+     */
+    var isChordPlaying by mutableStateOf(false)
+        private set
+
+    /** The chord last sounded, so the button can replay it without a new tap. */
+    var lastPlayedChordName by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Which guitar the chords are played on. An acoustic is the default because
+     * a chord sheet is overwhelmingly an acoustic thing, and it is what a
+     * fingerstyle player expects to hear.
+     */
+    var chordVoice by mutableStateOf(GuitarVoice.ACOUSTIC)
+        private set
+
+    /** Switches guitars, and sounds the last chord again on the new one. */
+    fun toggleChordVoice() {
+        chordVoice = GuitarVoice.otherOf(chordVoice)
+        // A chord left ringing on the old guitar while the toggle says the new
+        // one is a worse mismatch than not replaying at all, so it is always
+        // cut off first.
+        stopChord()
+        lastPlayedChordName?.let { playChord(it) }
+    }
+
     /** Set while the tapped-chord popup is up. */
     var showChordPopup by mutableStateOf(false)
         private set
@@ -99,6 +131,10 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var renderJob: Job? = null
     private var saveTreeUri: Uri? = null
+
+    /** Synthesises the tapped chord; reused so repeat taps reuse the audio path. */
+    private val player = ChordPlayer()
+    private var playJob: Job? = null
 
     init {
         applySavedLayout(force = true)
@@ -322,6 +358,52 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Sounds the tapped chord, so a tap on the sheet is heard as well as seen.
+     *
+     * The voicing is the database's first position for the name, which is the
+     * standard open shape the diagram popup shows. Played in this tab's own
+     * tuning and capo, so a drop-D song in the PDF does not sound like the same
+     * song in E standard.
+     *
+     * The synthesis is off the main thread: a chord is about fifty thousand
+     * samples, which is far too much to add to a frame.
+     */
+    fun playChord(name: String) {
+        val currentTab = tab ?: return
+        val query = normalizeChordName(name)
+        if (query.isEmpty()) return
+        val shape = chordBook.search(query).firstOrNull() ?: return
+        val openPitches = ChordPitch.openPitchesFor(currentTab.tuning, chordBook.strings)
+        val pitches = ChordPitch.soundingPitches(shape.position, openPitches, currentTab.capo)
+        if (pitches.isEmpty()) return
+
+        lastPlayedChordName = name
+        playJob?.cancel()
+        playJob = viewModelScope.launch {
+            // The track loops the strum, so it keeps sounding until stopChord;
+            // the flag stays set for as long as the user lets it ring.
+            withContext(Dispatchers.Default) { player.play(pitches, chordVoice) }
+            isChordPlaying = player.isPlaying()
+        }
+    }
+
+    /**
+     * Play or cut off the last chord from a button, so a chord can be heard
+     * again without going back to the sheet and tapping it a second time.
+     */
+    fun toggleChordPlayback() {
+        val name = lastPlayedChordName ?: return
+        if (isChordPlaying) stopChord() else playChord(name)
+    }
+
+    /** Stops the chord still ringing, e.g. when the screen goes away. */
+    fun stopChord() {
+        playJob?.cancel()
+        isChordPlaying = false
+        player.stop()
+    }
+
     fun dismissChordPopup() {
         showChordPopup = false
         popupRenderJob?.cancel()
@@ -471,6 +553,8 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
         super.onCleared()
         renderJob?.cancel()
         popupRenderJob?.cancel()
+        playJob?.cancel()
+        player.release()
         // Safe to free here: the screen has been disposed, nothing is drawing.
         pdfPages.forEach { it.recycle() }
         pdfPages = emptyList()
