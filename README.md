@@ -16,9 +16,12 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - Four diagrams per row on A4, 16 per page, ready to print
   - Every page credits the [chords-db](https://github.com/tombatossals/chords-db) source (MIT)
 - **Chord charts** rendered as PDF with color-coded formatting
-- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below — nudgeable up or down with the Studio's chord offset so a chord can sit closer to its own lyric
+- **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below. The shipped default (offset 1.00, height 0.90, gap 0.30) puts each chord where you would draw it by hand, and the Studio's chord offset nudges it up or down further when a chord wants to sit closer to its own lyric
 - **Tap any chord for its diagram** — tapping a chord name in the PDF preview opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
 - **Page formats** — Small (the default), Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
+  - The Custom dials can be **collapsed with one tap** (the ⚙ button in the bar), handing their height back to the sheet for reading instead of tuning
+  - A saved Studio layout is re-applied every time you open a song, so a wrap or spacing change you tuned once sticks to every sheet that follows
+  - Each sheet opens at 1× zoom rather than inheriting the zoom of the last one
 - **Auto-scroll the sheet** — every PDF preview carries a floating control bar in the corner (↑ − 30 dp/s + ▶) that scrolls the sheet from top to bottom on its own:
   - **↑** jumps instantly to the top of the sheet
   - **− / +** step through 16 preset paces, from a **1 dp/s crawl** (about 8 minutes for a page, for freezing on a single chord) up to 600 dp/s for skimming, with the current speed shown between them
@@ -84,7 +87,7 @@ If the Android SDK isn't at the default location, set its path in `local.propert
 
 ### Versioning
 
-The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.52**. The version shows in the app header beside the title.
+The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.53**. The version shows in the app header beside the title.
 
 ### Release signing
 
