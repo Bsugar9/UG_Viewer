@@ -7,9 +7,12 @@ import android.os.ParcelFileDescriptor
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ugviewer.chord.ChordLibrary
+import com.ugviewer.chord.ChordPitch
+import com.ugviewer.chord.ChordPlayer
 import com.ugviewer.chord.ChordShape
 import com.ugviewer.chord.ChordShapePdfGenerator
 import com.ugviewer.chord.ChordVoiceQuery
+import com.ugviewer.util.PdfGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +60,39 @@ class ChordSearchViewModel(application: Application) : AndroidViewModel(applicat
     private var shapes: List<ChordShape> = emptyList()
     private var generation = 0
 
+    /**
+     * Where each chord name sits on the rendered pages, so a tap can find the
+     * shape under the finger. Produced alongside the PDF rather than guessed from
+     * the layout afterwards, so it cannot drift out of step with the drawing.
+     */
+    @Volatile
+    private var hitMap: PdfGenerator.ChordHitMap = PdfGenerator.ChordHitMap.EMPTY
+
+    /**
+     * The shapes the current hit map was built from, in the order they were
+     * drawn. Kept so a hit can be turned back into the exact voicing it stands
+     * for.
+     */
+    @Volatile
+    private var renderedShapes: List<ChordShape> = emptyList()
+
+    /** The chord sounded by the last tap, and whether it is still playing. */
+    @Volatile
+    private var player: ChordPlayer? = null
+
+    @Volatile
+    private var lastPlayedShape: ChordShape? = null
+
+    /** True while a tapped chord is sounding, so the button matches the audio. */
+    @Volatile
+    var isChordPlaying: Boolean = false
+        private set
+
+    /** The chord the play/stop button would act on, or null if nothing yet. */
+    @Volatile
+    var lastPlayedChordName: String? = null
+        private set
+
     fun onQueryChange(value: String) {
         _uiState.update { it.copy(query = value) }
         if (value.isBlank()) {
@@ -103,17 +139,90 @@ class ChordSearchViewModel(application: Application) : AndroidViewModel(applicat
 
         viewModelScope.launch {
             val title = titleFor(query, matches)
-            val pages = withContext(Dispatchers.Default) {
-                renderPages(matches, title, library.fretsOnChord)
+            // Rendered into locals rather than a nullable var: withContext hands
+            // back through a suspension point, and the compiler cannot promise
+            // the var was assigned across it.
+            var map = PdfGenerator.ChordHitMap.EMPTY
+            val rendered = withContext(Dispatchers.Default) {
+                renderPages(matches, title, library.fretsOnChord) { map = it }
             }
             // A newer query already started rendering: drop these bitmaps so the
             // stale pages are never shown.
             if (token != generation) {
-                pages.forEach { it.recycle() }
+                rendered.forEach { it.recycle() }
                 return@launch
             }
-            _uiState.update { it.copy(pages = pages, isRendering = false) }
+            hitMap = map
+            renderedShapes = matches
+            _uiState.update { it.copy(pages = rendered, isRendering = false) }
         }
+    }
+
+    /**
+     * The chord under a tap on preview page [page] at PDF-point coordinates, or
+     * null when the tap landed in the margin or a gap between cells.
+     */
+    fun chordAt(page: Int, x: Float, y: Float): PdfGenerator.ChordHit? =
+        hitMap.chordAt(page, x, y)
+
+    /**
+     * Sounds the shape drawn at a tap on preview page [page].
+     *
+     * The exact shape, not a fresh lookup of its name: a family page carries
+     * several voicings of the same chord, and the one the user pointed at is the
+     * one they want to hear. The generator records one hit per shape in the order
+     * it drew them, so a hit's own position in the list is the shape it belongs
+     * to — no second identifier to keep in step with the drawing.
+     */
+    fun playChordAt(page: Int, x: Float, y: Float) {
+        val hit = chordAt(page, x, y) ?: return
+        val index = hitMap.hits.indexOfFirst { it === hit }
+        val shape = renderedShapes.getOrNull(index) ?: return
+        playChordShape(shape)
+    }
+
+    /**
+     * Sounds the shape whose name is at the tap, in the same standard tuning the
+     * diagrams are drawn in, and keeps it going until [stopChord] or another
+     * chord replaces it.
+     *
+     * A bare root is looked up under its own name, which is how the search screen
+     * resolves it, so "C" and "Cm" each play the shape the user actually tapped
+     * rather than a different voicing of the same root.
+     */
+    fun playChordShape(shape: ChordShape) {
+        val p = player ?: ChordPlayer().also { player = it }
+        val pitches = ChordPitch.soundingPitches(shape.position, ChordPitch.STANDARD_TUNING)
+        if (pitches.isEmpty()) return
+        lastPlayedShape = shape
+        lastPlayedChordName = shape.name
+        p.play(pitches)
+        isChordPlaying = true
+    }
+
+    /** Replays or cuts off the last tapped chord, for the play/stop button. */
+    fun toggleChordPlayback() {
+        val shape = lastPlayedShape
+        val p = player
+        if (shape == null || p == null) return
+        if (isChordPlaying) {
+            p.stop()
+            isChordPlaying = false
+        } else {
+            playChordShape(shape)
+        }
+    }
+
+    /** Silences a chord still ringing, e.g. when the screen goes away. */
+    fun stopChord() {
+        player?.stop()
+        isChordPlaying = false
+    }
+
+    override fun onCleared() {
+        player?.release()
+        player = null
+        super.onCleared()
     }
 
     /**
@@ -175,13 +284,15 @@ class ChordSearchViewModel(application: Application) : AndroidViewModel(applicat
     private fun renderPages(
         shapes: List<ChordShape>,
         title: String,
-        fretsOnChord: Int
+        fretsOnChord: Int,
+        onHitMap: (PdfGenerator.ChordHitMap) -> Unit
     ): List<Bitmap> {
         val bytes = ChordShapePdfGenerator.generateChordPdfToBytes(
             shapes = shapes,
             title = title,
             stringLabels = library.stringLabels,
-            fretsOnChord = fretsOnChord
+            fretsOnChord = fretsOnChord,
+            hitMapOut = onHitMap
         )
         return rasterise(bytes, RENDER_SCALE)
     }

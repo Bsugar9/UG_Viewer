@@ -14,7 +14,10 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - Tap a root note (a 4x3 grid of all 12 roots) or type an exact chord name
   - **Say it instead of typing it**: the mic understands "Show me a C chord", "an A minor seven", or "F sharp minor"
   - Four diagrams per row on A4, 16 per page, ready to print
+  - **Tap any diagram to hear that exact shape** — the voicing drawn on the page is the one that plays, not a different voicing of the same chord, and it keeps re-strumming until you press Stop
+  - A **Play/Stop** button beside Save PDF, so a shape can be heard again without hunting for it on the page
   - Every page credits the [chords-db](https://github.com/tombatossals/chords-db) source (MIT)
+  - No auto-scroll here: this is a reference grid to scan and tap, not something to read top to bottom
 - **Chord charts** rendered as PDF with color-coded formatting
 - **Chords aligned over lyrics** — chord names sit exactly above the word they belong to, wrap together with their word (a chord is never split or left behind when a line wraps), never overlap each other, and are centred in the white space between the lyric lines above and below. The shipped default (height 0.90, gap 0.30) puts each chord where you would draw it by hand, and the Studio's chord offset nudges it up or down further when a chord wants to sit closer to its own lyric
   - A chord can never print on top of the line below it. The row is sized for where the chord is *actually* drawn, so a Studio layout that slides the chord off centre gets a taller row rather than a chord that lands on the lyric — or, on a chord-only line above a tab block, on top of the tab itself
@@ -94,7 +97,7 @@ If the Android SDK isn't at the default location, set its path in `local.propert
 
 ### Versioning
 
-The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.55**. The version shows in the app header beside the title.
+The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.56**. The version shows in the app header beside the title.
 
 ### Release signing
 
@@ -112,11 +115,13 @@ Without them `assembleRelease` still succeeds but falls back to the debug key, s
 
 ### Tests
 
-The chord-name matching, spoken-phrase parsing, PDF column layout, the chord shape engine (barre realization, curated voicings, slash-chord handling), and the chord audio engine are covered by JVM unit tests:
+The chord-name matching, spoken-phrase parsing, PDF column layout, the chord shape engine (barre realization, curated voicings, slash-chord handling), the tap targets on a printed chord page, and the chord audio engine are covered by JVM unit tests:
 
 ```
 gradlew.bat :app:testDebugUnitTest
 ```
+
+The chord-page layout is deliberately a pure function of the shapes rather than arithmetic buried in the drawing loop, because the drawing and the tap targets have to agree: a tap that finds the wrong chord is worse than one that finds nothing, since it sounds wrong rather than silent. Sharing one layout means there is only one grid for the two to disagree about, and it can be tested without a PDF or a device.
 
 The audio tests render the real waveform rather than mocking it, because the things that go wrong in synthesis are inaudible in a passing build: that a string starts loud and rings on through the strum, that the tail is released rather than cut (a hard cut into the gap before the next strum is a click), that the output neither clips nor falls silent, that the string loses its highs as it fades, that the soundbox is actually reaching the signal, and that the pitch recovers the frequency that was asked for by autocorrelation.
 

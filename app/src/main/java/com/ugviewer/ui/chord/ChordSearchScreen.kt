@@ -28,7 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,7 +77,9 @@ import com.ugviewer.ui.theme.Highlight
 import com.ugviewer.ui.theme.Surface as SurfaceColor
 import com.ugviewer.ui.theme.TextPrimary
 import com.ugviewer.ui.theme.TextSecondary
+import com.ugviewer.ui.viewer.PdfBarContentPadding
 import com.ugviewer.ui.viewer.PdfPagesPreview
+import com.ugviewer.util.PdfGenerator
 import com.ugviewer.viewmodel.ChordSearchViewModel
 
 /** Four per row keeps each of the 12 root chips wide enough for "C#" and "F#". */
@@ -101,6 +106,12 @@ fun ChordSearchScreen(
             snackbarHostState.showSnackbar(it)
             viewModel.clearMessage()
         }
+    }
+
+    // A chord left ringing when the screen is closed would follow the user off
+    // it, so leaving silences whatever is sounding.
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopChord() }
     }
 
     fun submit(rawQuery: String) {
@@ -199,34 +210,69 @@ fun ChordSearchScreen(
         bottomBar = {
             if (state.shapeCount > 0) {
                 Surface(color = SurfaceColor, shadowElevation = 8.dp) {
-                    Button(
-                        onClick = { viewModel.savePdf() },
-                        enabled = !state.isSaving,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
                             .padding(horizontal = 16.dp, vertical = 10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Highlight),
-                        shape = RoundedCornerShape(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (state.isSaving) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                color = TextPrimary,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
+                        // Replays whatever chord was last tapped, or cuts it off.
+                        // It sits beside Save rather than on its own row so the
+                        // sheet keeps the height it had before playback existed.
+                        Button(
+                            onClick = { viewModel.toggleChordPlayback() },
+                            enabled = viewModel.lastPlayedChordName != null,
+                            contentPadding = PdfBarContentPadding,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Accent,
+                                contentColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
                             Icon(
-                                Icons.Default.Download,
+                                imageVector = if (viewModel.isChordPlaying) {
+                                    Icons.Default.Stop
+                                } else {
+                                    Icons.Default.PlayArrow
+                                },
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (viewModel.isChordPlaying) "Stop" else "Play",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (state.isSaving) "Saving..." else "Save PDF to Downloads",
-                            fontWeight = FontWeight.Bold
-                        )
+
+                        Button(
+                            onClick = { viewModel.savePdf() },
+                            enabled = !state.isSaving,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PdfBarContentPadding,
+                            colors = ButtonDefaults.buttonColors(containerColor = Highlight),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (state.isSaving) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = TextPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (state.isSaving) "Saving..." else "Save PDF to Downloads",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -314,7 +360,25 @@ fun ChordSearchScreen(
 
                 else -> PdfPagesPreview(
                     pages = state.pages,
-                    topContent = { ChordResultSummary(state) }
+                    // No auto-scroll here: this is a reference grid the user
+                    // scans and taps, not something to be read top to bottom, and
+                    // the control sat over the diagrams it was scrolling past.
+                    showAutoScrollControls = false,
+                    topContent = {
+                        ChordResultSummary(
+                            state,
+                            lastPlayedChordName = viewModel.lastPlayedChordName,
+                            isChordPlaying = viewModel.isChordPlaying
+                        )
+                    },
+                    onPageTapped = { pageIndex, pointInPage ->
+                        val bitmap = state.pages.getOrNull(pageIndex) ?: return@PdfPagesPreview
+                        // Preview pixels -> PDF points, which is the space the
+                        // hit map was built in.
+                        val pdfX = pointInPage.x * PdfGenerator.PAGE_WIDTH / bitmap.width
+                        val pdfY = pointInPage.y * PdfGenerator.PAGE_HEIGHT / bitmap.height
+                        viewModel.playChordAt(pageIndex + 1, pdfX, pdfY)
+                    }
                 )
             }
         }
@@ -420,7 +484,9 @@ private fun RootQuickPick(
 
 @Composable
 private fun ChordResultSummary(
-    state: com.ugviewer.viewmodel.ChordSearchUiState
+    state: com.ugviewer.viewmodel.ChordSearchUiState,
+    lastPlayedChordName: String? = null,
+    isChordPlaying: Boolean = false
 ) {
     Column(
         modifier = Modifier
@@ -443,6 +509,20 @@ private fun ChordResultSummary(
             color = TextSecondary,
             maxLines = 4,
             overflow = TextOverflow.Ellipsis
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        // Says what a tap does, because nothing on the page looks pressable. Once
+        // a chord has been tapped it reports which one is sounding, so the
+        // summary doubles as the answer to "what am I hearing".
+        Text(
+            text = if (isChordPlaying && lastPlayedChordName != null) {
+                "Playing $lastPlayedChordName - tap another shape to hear it"
+            } else {
+                "Tap any shape to hear it"
+            },
+            fontSize = 12.sp,
+            color = if (isChordPlaying) ChordYellow else TextSecondary
         )
     }
 }

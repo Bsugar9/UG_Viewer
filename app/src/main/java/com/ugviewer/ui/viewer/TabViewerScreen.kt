@@ -1412,6 +1412,10 @@ private const val FONT_SIZE_STEP = 1f
  * mid-word, so the label drops to 13pt and the pad to 8dp. With no vertical pad
  * the label sits in the middle of the box on its own, so there is no fudge
  * factor to keep in step with the font scale.
+ *
+ * Shared rather than repeated: the chord-shape screen's bottom bar sits its
+ * buttons side by side, and two buttons with two different paddings in one row
+ * read as a mistake.
  */
-private val PdfBarContentPadding = PaddingValues(horizontal = 8.dp)
+internal val PdfBarContentPadding = PaddingValues(horizontal = 8.dp)
 private const val PDF_BAR_LABEL_SP = 13
