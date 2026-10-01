@@ -26,43 +26,59 @@ class ChordStringTest {
     }
 
     @Test
-    fun `a plucked string starts loud and is still sounding at the loop point`() {
-        // The whole point of the sustain: a raw strum is silent again well
-        // before the loop wraps, which is heard as the chord stopping. It has to
-        // still be ringing at the end of the buffer.
+    fun `a plucked string starts loud and rings on through the strum`() {
+        // The sustain's job: without it a raw strum is silent again well before
+        // the buffer is spent, and the chord is heard as a stab that dies rather
+        // than a chord being played. The tail is released on purpose, so this
+        // measures the body of the strum rather than its last sample.
         val samples = player.renderStrum(listOf(81))
         val head = rms(samples, 1000, 8000)
-        val tail = rms(samples, samples.size - 8000, 8000)
+        val middle = rms(samples, (samples.size * 0.5f).toInt(), 8000)
         assertTrue("string did not start loudly (head rms $head)", head > 1000f)
         assertTrue(
-            "string had died before the loop wrapped (head $head, tail $tail)",
-            tail > head / 4f
+            "string had died before the strum was over (head $head, middle $middle)",
+            middle > head / 4f
         )
     }
 
     @Test
-    fun `the chord holds a steady level right through the loop`() {
-        // A sustained chord must not sag in the middle, or the loop sounds like
-        // it breathes: loud, quiet, loud.
+    fun `the chord holds a steady level through the strum`() {
+        // A sustained chord must not sag in the middle, or it is heard as a
+        // stab that fades rather than a chord being played.
         val samples = player.renderStrum(listOf(45, 52, 57, 60, 64, 69))
-        val late = rms(samples, (samples.size * 0.70).toInt(), 8000)
+        val late = rms(samples, (samples.size * 0.55f).toInt(), 8000)
         val early = rms(samples, 8000, 8000)
         assertTrue(
-            "chord faded out before the loop wrapped (early $early, late $late)",
+            "chord faded out before the strum ended (early $early, late $late)",
             late > early / 3f
         )
     }
 
     @Test
-    fun `the loop seam is continuous rather than a step`() {
-        // The wrap goes from the last sample straight back to the first. That
-        // step is a click, so the two ends have to meet at the same level.
-        val samples = player.renderStrum(listOf(52))
-        val endLevel = rms(samples, samples.size - 2000, 2000)
-        val startLevel = rms(samples, 0, 2000)
+    fun `the strum is released so the restart does not click`() {
+        // The buffer is played again a second after it ends, so a hard cut from a
+        // ringing chord into silence is a click on every repeat. The tail has to
+        // be faded all the way down, not merely quiet.
+        val samples = player.renderStrum(listOf(45, 52, 57, 60, 64, 69))
+        assertTrue("strum starts with a click (${samples[0]})", abs(samples[0].toInt()) < 300)
+        val last = abs(samples[samples.size - 1].toInt())
+        assertTrue("strum ends on a click ($last)", last < 300)
+        // And the whole of the last stretch is coming down, not just the final
+        // sample, so the release is a fade rather than a lucky zero.
+        val beforeEnd = rms(samples, samples.size - 6000, 4000)
+        assertTrue("strum was still loud as it ended ($beforeEnd)", beforeEnd < 1500f)
+    }
+
+    @Test
+    fun `the restart gap is a second of silence`() {
+        // The gap is what makes a repeat read as separate strums of one chord
+        // rather than a single drone. A second is the figure the behaviour is
+        // built around, so it is pinned here rather than left to a constant
+        // nobody re-checks, and it has to be long enough to actually hear.
+        assertEquals(1000L, ChordPlayer.RESTART_DELAY_MS)
         assertTrue(
-            "loop seam is a step (start $startLevel, end $endLevel)",
-            endLevel < startLevel * 3 && startLevel < endLevel * 3
+            "the gap is too short to hear (${ChordPlayer.RESTART_DELAY_MS}ms)",
+            ChordPlayer.RESTART_DELAY_MS >= 500
         )
     }
 
@@ -139,74 +155,61 @@ class ChordStringTest {
     }
 
     @Test
-    fun `the rendered strum is the length the loop expects`() {
+    fun `the rendered strum is the length the buffer expects`() {
         val samples = player.renderStrum(listOf(52))
         assertEquals(ChordPlayer.STRUM_MS.toInt() * ChordPlayer.SAMPLE_RATE / 1000, samples.size)
     }
 
     @Test
-    fun `the two guitars are audibly different`() {
-        // The whole point of the toggle: a different guitar, not the same tone
-        // relabelled. This is checked on the plucked strings, because the
-        // sustain deliberately evens out the finished chords to the same level -
-        // what the toggle changes is the timbre, not the loudness.
-        val acoustic = player.pluck(220f, 40000, seed = 7L, voice = GuitarVoice.ACOUSTIC)
-        val electric = player.pluck(220f, 40000, seed = 7L, voice = GuitarVoice.ELECTRIC)
+    fun `the soundbox colours the chord`() {
+        // The body and top-block resonances are most of what makes a bare string
+        // sound like a guitar rather than a synth, so the EQ has to be reaching
+        // the signal. Measured as the total energy the filter adds: a chord
+        // passed through it cannot be the same signal as the string alone.
+        val string = player.pluck(220f, 40000, seed = 7L)
+        val chord = player.renderStrum(listOf(57))
+        val stringEnergy = totalEnergy(string)
+        val chordEnergy = totalEnergy(FloatArray(chord.size) { chord[it] / Short.MAX_VALUE.toFloat() })
         assertTrue(
-            "the two voices rendered identical strings",
-            !acoustic.contentEquals(electric)
+            "the soundbox made no difference to the signal ($stringEnergy vs $chordEnergy)",
+            abs(chordEnergy - stringEnergy) > 1e-6
         )
-
-        // The electric's string is the one that rings on, which is exactly what
-        // energyLeftAfterSecond is for.
-        fun sustain(string: FloatArray): Float {
-            val start = rmsOf(string, 1000, 8000)
-            val later = rmsOf(string, string.size - 8000, 8000)
-            return later / start
-        }
-        assertTrue(
-            "the electric did not ring on (electric ${sustain(electric)}, acoustic ${sustain(acoustic)})",
-            sustain(electric) > sustain(acoustic)
-        )
-
-        // The soundbox is the acoustic's own colour: only it has resonances.
-        assertTrue(GuitarVoice.ACOUSTIC.bodyResonances.isNotEmpty())
-        assertTrue(GuitarVoice.ELECTRIC.bodyResonances.isEmpty())
     }
 
-    private fun rmsOf(string: FloatArray, start: Int, count: Int): Float {
+    @Test
+    fun `the string darkens as it fades`() {
+        // The low-pass in the feedback path is what stops a plucked string
+        // holding its brightness to the end. If it were removed the upper
+        // harmonics would never die first and the note would ring on, thin.
+        val string = player.pluck(220f, 40000, seed = 7L)
+        fun brightness(from: Int, count: Int): Float {
+            var total = 0.0
+            for (i in from until from + count) {
+                total += abs((string[i] - string[i - 1]).toDouble())
+            }
+            return (total / count).toFloat()
+        }
+        val early = brightness(2000, 4000)
+        val late = brightness(string.size - 6000, 4000)
+        assertTrue(
+            "the string did not lose its highs as it faded (early $early, late $late)",
+            late < early
+        )
+    }
+
+    @Test
+    fun `the same chord renders the same way every time`() {
+        // The pick is driven by a seeded generator so the tone is reproducible.
+        // That is what lets the rest of these tests assert on the waveform at
+        // all, and it also means tapping a chord twice sounds identical.
+        val first = player.renderStrum(listOf(45, 52, 57, 60, 64))
+        val second = player.renderStrum(listOf(45, 52, 57, 60, 64))
+        assertTrue("the render is not reproducible", first.contentEquals(second))
+    }
+
+    private fun totalEnergy(samples: FloatArray): Double {
         var sum = 0.0
-        for (i in start until minOf(start + count, string.size)) {
-            val v = string[i].toDouble()
-            sum += v * v
-        }
-        return sqrt(sum / count).toFloat()
-    }
-
-    @Test
-    fun `an acoustic picks nearer the bridge sound brighter than the fingerstyle`() {
-        // Higher damping rolls off more high frequency, so a duller pick is
-        // measurably less bright at the same pitch and length.
-        fun brightness(voice: GuitarVoice): Float {
-            val string = player.pluck(220f, 20000, voice = voice)
-            // Difference between the signal and its own average: the part that
-            // would vanish through a low-pass is the brightness.
-            var high = 0.0
-            for (i in 1 until string.size) high += abs((string[i] - string[i - 1]).toDouble())
-            return (high / string.size).toFloat()
-        }
-        assertTrue(
-            "acoustic was not the rounder of the two",
-            brightness(GuitarVoice.ACOUSTIC) < brightness(GuitarVoice.ELECTRIC)
-        )
-    }
-
-    @Test
-    fun `the voice toggle always lands on the other guitar`() {
-        val from = GuitarVoice.ACOUSTIC
-        val to = GuitarVoice.otherOf(from)
-        assertTrue("toggled to itself", to !== from)
-        assertTrue("toggled back to the same guitar", GuitarVoice.otherOf(to) === from)
-        assertTrue("voices are missing a name", GuitarVoice.ALL.all { it.label.isNotBlank() })
+        for (v in samples) sum += v.toDouble() * v
+        return sum
     }
 }

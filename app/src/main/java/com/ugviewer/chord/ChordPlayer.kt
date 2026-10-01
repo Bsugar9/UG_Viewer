@@ -133,81 +133,6 @@ object ChordPitch {
 }
 
 /**
- * Which guitar is being played.
- *
- * The two are the same physical model with different numbers, which is the point:
- * a steel-string through a soundbox and a solid-body electric are not different
- * instruments so much as the same string excited and damped differently. So the
- * difference lives in the three things a player actually changes between them.
- */
-class GuitarVoice(
-    /** Shown on the toggle, and what the user recognises the guitar by. */
-    val label: String,
-
-    /**
-     * Where the pick strikes, as a fraction of the string from the bridge. A
-     * steel-string fingerstyle sits further back, which is rounder; a flatpick
-     * on an electric sits right over the bridge, which is thinner and brighter.
-     */
-    val pickPosition: Float,
-
-    /**
-     * How much of the neighbouring sample is blended into each one. Higher is a
-     * brighter, more slowly dying string. An electric's magnetic pickup barely
-     * loads the string, so it rings on; a steel string against a soundbox loses
-     * its highs quickly.
-     */
-    val damping: Float,
-
-    /**
-     * Energy left after one second of ringing. A steel string through a soundbox
-     * dies noticeably faster than a solid body's.
-     */
-    val energyLeftAfterSecond: Float,
-
-    /**
-     * How hard the pick hits. A flatpick on an electric is a harder attack, which
-     * is most of why that instrument cuts through a mix.
-     */
-    val pickStrength: Float,
-
-    /**
-     * Resonant peaks of a soundbox, in Hz. An acoustic guitar's top end comes
-     * from the air and the wood resonating, which is what gives it the woody
-     * edge an electric cannot produce; an electric has no such body, so it is
-     * left with none.
-     */
-    val bodyResonances: List<Float> = emptyList()
-) {
-    companion object {
-        /** Steel string through a soundbox: round, woody, dies at a natural rate. */
-        val ACOUSTIC = GuitarVoice(
-            label = "Acoustic",
-            pickPosition = 0.30f,
-            damping = 0.42f,
-            energyLeftAfterSecond = 0.10f,
-            pickStrength = 0.75f,
-            bodyResonances = listOf(100f, 200f, 400f)
-        )
-
-        /** Solid body with a magnetic pickup: bright, hard attack, rings longer. */
-        val ELECTRIC = GuitarVoice(
-            label = "Electric",
-            pickPosition = 0.10f,
-            damping = 0.14f,
-            energyLeftAfterSecond = 0.30f,
-            pickStrength = 1f
-        )
-
-        val ALL = listOf(ACOUSTIC, ELECTRIC)
-
-        /** The other guitar, for the toggle. */
-        fun otherOf(voice: GuitarVoice): GuitarVoice =
-            if (voice === ACOUSTIC) ELECTRIC else ACOUSTIC
-    }
-}
-
-/**
  * A plucked guitar chord, synthesised on the spot and left ringing until it is
  * stopped.
  *
@@ -225,26 +150,42 @@ class GuitarVoice(
  *
  * The strings are staggered so the chord arrives as a strum, and the rendered
  * buffer is looped, so the chord keeps sounding - and keeps being re-strummed -
- * until the user stops it. Which guitar it sounds like is [GuitarVoice]: the
- * same model with a different pick, damping and decay, plus the soundbox
- * resonance that only an acoustic has.
+ * until the user stops it. The string is a steel one through a soundbox: the
+ * numbers below are all that separates an acoustic from other guitars, and
+ * they are what give it its round attack and its woody top end.
  */
 class ChordPlayer {
 
     private var track: AudioTrack? = null
+    private var worker: Thread? = null
+
+    /**
+     * Read by the writer thread on every pass, so it has to be visible across
+     * threads: without the volatile a stop could sit in the thread's cache and
+     * the chord would keep going after Stop.
+     */
+    @Volatile
+    private var running = false
 
     companion object {
         const val SAMPLE_RATE = 44100
 
-        /** One strum, and the length of the loop that repeats it. */
+        /** One strum, and the length of the buffer that is played on repeat. */
         private const val STRUM_SECONDS = 1.6f
 
         /**
-         * How much of the next strum is mixed over the end of this one, so the
-         * loop point is inaudible. Without it the chord is cut off and starts
-         * again, which is a gap the ear reads as the sound having stopped.
+         * Silence between one strum and the next, in milliseconds. The gap is
+         * what makes the repeat read as separate strokes of the same chord
+         * rather than one chord held down.
          */
-        private const val CROSSFADE_SECONDS = 0.45f
+        const val RESTART_DELAY_MS = 1000L
+
+        /**
+         * How long the strum is released into that silence. A hard cut from a
+         * ringing chord into a second of nothing is a click, so the tail is
+         * faded rather than stopped.
+         */
+        private const val RELEASE_SECONDS = 0.35f
 
         /** Gap between strings in a strum, low to high. */
         private const val STRUM_STEP_SECONDS = 0.022f
@@ -282,36 +223,107 @@ class ChordPlayer {
 
         /** Milliseconds in one strum, so the UI can reason about the loop. */
         val STRUM_MS: Long = (STRUM_SECONDS * 1000f).toLong()
+
+        // The string itself: a steel one through a soundbox. Together these five
+        // numbers are what make the chord sound like an acoustic guitar rather
+        // than like a bare synthesised string.
+
+        /**
+         * Where the pick strikes, as a fraction of the string from the bridge.
+         * Further back is rounder; right over the bridge is thin and bright.
+         */
+        private const val PICK_POSITION = 0.30f
+
+        /**
+         * How much of the neighbouring sample is blended into each one. Higher is
+         * a brighter, more slowly dying string; a steel string against a soundbox
+         * loses its highs quickly.
+         */
+        private const val DAMPING = 0.42f
+
+        /** Energy left after one second of ringing, as a fraction. */
+        private const val ENERGY_LEFT_AFTER_SECOND = 0.10f
+
+        /** How hard the pick hits. */
+        private const val PICK_STRENGTH = 0.75f
+
+        /** Resonant peaks of the soundbox, in Hz. */
+        private val BODY_RESONANCES = listOf(100f, 200f, 400f)
     }
 
     /**
-     * Sounds [pitches] (MIDI, any order) as one strum on [voice] and keeps it
-     * going in a loop until [stop]. A tap for a different chord replaces the one
-     * sounding rather than layering on top of it.
+     * Sounds [pitches] (MIDI, any order) as one strum, and keeps re-strumming it
+     * — with [RESTART_DELAY_MS] of silence between each one — until [stop]. A tap
+     * for a different chord replaces the one sounding rather than layering on top
+     * of it.
      */
     @Synchronized
-    fun play(pitches: List<Int>, voice: GuitarVoice = GuitarVoice.ACOUSTIC) {
+    fun play(pitches: List<Int>) {
         if (pitches.isEmpty()) return
+        val samples = renderStrum(pitches.sorted())
         stop()
-        playLooped(renderStrum(pitches.sorted(), voice))
+
+        val audioTrack = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .build()
+            )
+            .setBufferSizeInBytes(samples.size * 2)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        running = true
+        track = audioTrack
+        audioTrack.play()
+
+        // The strum is fed to the track over and over by a thread of its own
+        // rather than by the static-track loop points. Those looked like the
+        // obvious way to do it, but they are not dependable: a static track that
+        // will not re-arm its loop simply plays once and then sits there, which
+        // is a silent failure with nothing to show for it. Writing the buffer
+        // again is explicit, so either the chord is still sounding or the thread
+        // has died loudly.
+        worker = Thread({
+            try {
+                while (running) {
+                    // Blocking, so each strum is played in full before the next
+                    // one is written and the timing needs no arithmetic.
+                    val written = audioTrack.write(samples, 0, samples.size)
+                    if (written < 0) break
+                    // The gap the user asked for: a second of silence between
+                    // strums, so the chord is heard as separate strokes rather
+                    // than one held drone.
+                    Thread.sleep(RESTART_DELAY_MS)
+                }
+            } catch (_: InterruptedException) {
+                // Stop interrupts the wait; the thread is finished.
+            }
+        }, "chord-player").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     /**
-     * Renders one strum of [pitches] into a buffer the track can loop.
+     * Renders one strum of [pitches] into the buffer that is played on repeat.
      *
-     * A raw strum fades to nothing well before the loop comes round again, which
-     * is heard as the chord stopping and restarting rather than continuing. So
-     * two things are done about it: the note is sustained to hold a steady level
-     * for the length of the loop, and the end of the strum is crossfaded into
-     * the start of the next one, so the wrap has no seam to click on.
+     * A raw strum fades to nothing well before the strum is over, which is heard
+     * as the chord dying rather than being played. So the note is sustained to
+     * hold a steady level for the length of the strum, and then released: the
+     * tail is faded out at the end, because the buffer is played again a second
+     * later and a hard cut into that silence is a click.
      */
-    internal fun renderStrum(
-        pitches: List<Int>,
-        voice: GuitarVoice = GuitarVoice.ACOUSTIC
-    ): ShortArray {
-        val loopSamples = (SAMPLE_RATE * STRUM_SECONDS).roundToInt()
-        val crossfade = (SAMPLE_RATE * CROSSFADE_SECONDS).roundToInt().coerceAtMost(loopSamples / 2)
-        val mix = FloatArray(loopSamples)
+    internal fun renderStrum(pitches: List<Int>): ShortArray {
+        val totalSamples = (SAMPLE_RATE * STRUM_SECONDS).roundToInt()
+        val mix = FloatArray(totalSamples)
         // Each string takes an equal share of the headroom, so a six-note chord
         // is no louder than a three-note one.
         val gain = 0.5f / pitches.size
@@ -319,37 +331,28 @@ class ChordPlayer {
         for ((stringIndex, midi) in pitches.withIndex()) {
             val frequency = 440f * Math.pow(2.0, (midi - 69) / 12.0).toFloat()
             val startSample = (stringIndex * STRUM_STEP_SECONDS * SAMPLE_RATE).roundToInt()
-            val string = pluck(frequency, loopSamples - startSample, voice = voice)
+            val string = pluck(frequency, totalSamples - startSample)
             for (i in string.indices) {
                 val at = i + startSample
                 if (at < mix.size) mix[at] += string[i] * gain
             }
         }
 
-        if (voice.bodyResonances.isNotEmpty()) applyBody(mix, voice)
+        applyBody(mix)
         sustain(mix)
 
-        // The loop wraps from the end of the strum straight back to the start, and
-        // that seam is audible as a click. So the first stretch of the loop is
-        // crossfaded against the last stretch: the strum's tail is faded in over
-        // its own attack, which is exactly what the ear is about to hear next.
-        val out = FloatArray(loopSamples)
-        for (i in 0 until loopSamples) {
-            out[i] = if (i < crossfade) {
-                val t = i.toFloat() / crossfade
-                mix[i] * t + mix[loopSamples - crossfade + i] * (1f - t)
-            } else {
-                mix[i]
-            }
+        // Released at both ends. A step from silence at the start is a click, and
+        // so is a step into it at the end, where the next strum is a second away
+        // and would otherwise arrive on top of a hard cut.
+        val attack = (0.004f * SAMPLE_RATE).roundToInt()
+        for (i in 0 until attack) mix[i] *= i.toFloat() / attack
+        val release = (RELEASE_SECONDS * SAMPLE_RATE).roundToInt().coerceAtMost(totalSamples)
+        for (i in 0 until release) {
+            mix[totalSamples - 1 - i] *= i.toFloat() / release
         }
 
-        // The loop now arrives at the seam already carrying the tail, so a step
-        // from silence is what would click; a few milliseconds of fade removes it.
-        val edge = (0.004f * SAMPLE_RATE).roundToInt()
-        for (i in 0 until edge) out[i] *= i.toFloat() / edge
-
-        return ShortArray(loopSamples) {
-            (out[it] * Short.MAX_VALUE)
+        return ShortArray(totalSamples) {
+            (mix[it] * Short.MAX_VALUE)
                 .coerceIn(-Short.MAX_VALUE.toFloat(), Short.MAX_VALUE.toFloat())
                 .roundToInt().toShort()
         }
@@ -410,14 +413,13 @@ class ChordPlayer {
     }
 
     /**
-     * Runs the mix through the soundbox: a couple of peaking filters at the
-     * body and top-block resonances, which is where an acoustic's woody edge
-     * comes from. An electric has no body to resonate, so it skips this entirely
-     * - that absence is as much a part of its sound as the filters are of the
-     * acoustic's.
+     * Runs the mix through the soundbox: a peaking filter at each of the body
+     * and top-block resonances, which is where an acoustic's woody edge comes
+     * from. The air and the wood resonating is most of what separates this from
+     * a bare string, so the chord is not recognisable as a guitar without it.
      */
-    private fun applyBody(mix: FloatArray, voice: GuitarVoice) {
-        for (frequency in voice.bodyResonances) {
+    private fun applyBody(mix: FloatArray) {
+        for (frequency in BODY_RESONANCES) {
             val w = 2.0 * PI * frequency / SAMPLE_RATE
             val gain = 1.8
             val bandwidth = 0.06
@@ -456,8 +458,7 @@ class ChordPlayer {
     internal fun pluck(
         frequency: Float,
         length: Int,
-        seed: Long = 12345L,
-        voice: GuitarVoice = GuitarVoice.ACOUSTIC
+        seed: Long = 12345L
     ): FloatArray {
         val out = FloatArray(length)
         if (frequency <= 0f || length < 2) return out
@@ -466,20 +467,20 @@ class ChordPlayer {
         val line = FloatArray(period)
 
         // The pick: a burst of noise. Striking the string only excites the
-        // length between the pick and the end, and the pick position is what
-        // knocks out a harmonic - the hollow attack a pick halfway along a
-        // string makes, and the bright one it makes near the bridge.
+        // length between the pick and the end, and striking it back from the
+        // bridge is what knocks out a harmonic - the round attack a fingerstyle
+        // player gets, rather than the thin one a pick at the bridge makes.
         val random = java.util.Random(seed)
-        val pick = (period * voice.pickPosition).roundToInt().coerceIn(1, period - 1)
+        val pick = (period * PICK_POSITION).roundToInt().coerceIn(1, period - 1)
         for (i in 0 until period) {
             val noise = random.nextFloat() * 2f - 1f
-            line[i] = if (i <= pick) noise * voice.pickStrength else noise * 0.5f * voice.pickStrength
+            line[i] = if (i <= pick) noise * PICK_STRENGTH else noise * 0.5f * PICK_STRENGTH
         }
 
         // The decay is wanted per second, and one pass takes one period, so scale
         // it to the pitch. Without this a bass note would make a fraction of the
         // passes a treble note makes and ring on long after it should have gone.
-        val decayPerPass = Math.pow(voice.energyLeftAfterSecond.toDouble(), period.toDouble() / SAMPLE_RATE)
+        val decayPerPass = Math.pow(ENERGY_LEFT_AFTER_SECOND.toDouble(), period.toDouble() / SAMPLE_RATE)
             .toFloat()
 
         var index = 0
@@ -491,58 +492,33 @@ class ChordPlayer {
             // the upper harmonics go first, then scale by the decay so the whole
             // thing fades.
             val next = line[(index + 1) % period]
-            line[index] = (current * (1f - voice.damping) + next * voice.damping) * decayPerPass
+            line[index] = (current * (1f - DAMPING) + next * DAMPING) * decayPerPass
             index = (index + 1) % period
         }
         return out
     }
 
-    private fun playLooped(samples: ShortArray) {
-        val bytes = samples.size * 2
-        val audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .build()
-            )
-            .setBufferSizeInBytes(bytes)
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .build()
-
-        audioTrack.write(samples, 0, samples.size)
-        track = audioTrack
-
-        // The chord repeats from the top of the strum until stopped, so the
-        // user hears it as long as they want without touching anything.
-        runCatching { audioTrack.setLoopPoints(0, samples.size, -1) }
-        audioTrack.play()
-    }
-
     /** True while a chord is sounding. */
     @Synchronized
-    fun isPlaying(): Boolean = track?.playState == AudioTrack.PLAYSTATE_PLAYING
+    fun isPlaying(): Boolean = running && track?.playState == AudioTrack.PLAYSTATE_PLAYING
 
-    /** Silences the chord. */
+    /** Silences the chord and stops the writer that keeps feeding it. */
     @Synchronized
     fun stop() {
+        running = false
+        // The thread is usually asleep in the gap between strums rather than
+        // writing, so interrupting is what actually ends it. The track is
+        // stopped first so a write in progress returns rather than blocking.
+        worker?.interrupt()
         track?.let { running ->
             runCatching {
-                if (running.state == AudioTrack.STATE_INITIALIZED) {
-                    // A loop has to be cleared before the track can be stopped
-                    // cleanly; leaving one set makes the next play() a no-op.
-                    running.setLoopPoints(0, 0, 0)
-                    running.stop()
-                }
+                if (running.state == AudioTrack.STATE_INITIALIZED) running.stop()
             }
             runCatching { running.release() }
         }
+        // Not joined: the thread is a daemon on its way out, and blocking the
+        // caller for a join it does not need would make Stop feel laggy.
+        worker = null
         track = null
     }
 

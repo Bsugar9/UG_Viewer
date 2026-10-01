@@ -22,10 +22,9 @@ An Android app for searching, viewing, and saving guitar tabs and chords from Ul
   - A creator's `*` is treated as a highlight rather than a wildcard: `D*`, `C*` and `G**` are recognised as D, C and G chords and coloured like any other
 - **Tap any chord to hear it and see its diagram** — tapping a chord name in the PDF preview sounds the chord *and* opens a popup showing that chord's picture from the same chord-book renderer the Chord Shape Search prints, so a quick lookup never leaves the song
   - **Played in the tab's own tuning and capo**, so a drop-D song does not sound like the same song in E standard, and a capo'd chart is heard from the shape rather than the key
-  - **Real plucked-string synthesis**, not samples: each string is modelled as noise for the pick recirculating through a delay line one period long, with a low-pass that darkens the note as it fades and a pick position that gives the attack its edge
-  - **Acoustic or Electric**, switched in the popup. The two are the same model with different numbers — pick position, damping, decay and pick strength — plus the soundbox resonance that only the acoustic has, which is where its woody edge comes from
-  - **Keeps playing until you press Stop.** The chord is held at a steady level for the length of the loop and the loop seam is crossfaded, so it runs on instead of stopping and restarting
-  - The button replays the last chord without going back to the sheet, and switching guitar re-strums on the new one
+  - **Real plucked-string synthesis**, not samples: each string is modelled as noise for the pick recirculating through a delay line one period long, with a low-pass that darkens the note as it fades and a pick position that gives the attack its edge. A steel string through a soundbox — the body and top-block resonances are what give it its woody top end
+  - **Re-strums until you press Stop.** The chord is held at a steady level for the length of each strum, then released, and the strum is played again a second later — so it repeats as separate strokes of the same chord rather than dying once or droning on
+  - The button replays the last chord without going back to the sheet
 - **Page formats** — Small (the default), Fit To Page, or Custom with independent chord/lyric font dials (10-42pt), re-rendered live in the preview; layouts you save in the Studio appear here too, by name
   - The Custom dials can be **collapsed with one tap** (the ⚙ button in the bar), handing their height back to the sheet for reading instead of tuning
   - A saved Studio layout is re-applied every time you open a song, so a wrap or spacing change you tuned once sticks to every sheet that follows
@@ -95,7 +94,7 @@ If the Android SDK isn't at the default location, set its path in `local.propert
 
 ### Versioning
 
-The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.54**. The version shows in the app header beside the title.
+The version is fixed in `app/build.gradle.kts` (`versionNameValue` / `versionCodeValue`) and bumped by hand for each release — the current release is **2.55**. The version shows in the app header beside the title.
 
 ### Release signing
 
@@ -119,7 +118,7 @@ The chord-name matching, spoken-phrase parsing, PDF column layout, the chord sha
 gradlew.bat :app:testDebugUnitTest
 ```
 
-The audio tests render the real waveform rather than mocking it, because the things that go wrong in synthesis are inaudible in a passing build: that a string starts loud and is still sounding at the loop point, that the loop seam is a match rather than a click, that the output neither clips nor falls silent, and that the pitch recovers the frequency that was asked for by autocorrelation. The two guitars are compared on their plucked strings, so a toggle that relabelled the same tone would fail.
+The audio tests render the real waveform rather than mocking it, because the things that go wrong in synthesis are inaudible in a passing build: that a string starts loud and rings on through the strum, that the tail is released rather than cut (a hard cut into the gap before the next strum is a click), that the output neither clips nor falls silent, that the string loses its highs as it fades, that the soundbox is actually reaching the signal, and that the pitch recovers the frequency that was asked for by autocorrelation.
 
 ### Regenerating the chord data
 

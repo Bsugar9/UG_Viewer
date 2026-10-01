@@ -17,7 +17,6 @@ import com.ugviewer.chord.ChordLibrary
 import com.ugviewer.chord.ChordPitch
 import com.ugviewer.chord.ChordPlayer
 import com.ugviewer.chord.ChordShapePdfGenerator
-import com.ugviewer.chord.GuitarVoice
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.util.PdfThemeStore
 import com.ugviewer.util.YouTubeHelper
@@ -87,24 +86,6 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     /** The chord last sounded, so the button can replay it without a new tap. */
     var lastPlayedChordName by mutableStateOf<String?>(null)
         private set
-
-    /**
-     * Which guitar the chords are played on. An acoustic is the default because
-     * a chord sheet is overwhelmingly an acoustic thing, and it is what a
-     * fingerstyle player expects to hear.
-     */
-    var chordVoice by mutableStateOf(GuitarVoice.ACOUSTIC)
-        private set
-
-    /** Switches guitars, and sounds the last chord again on the new one. */
-    fun toggleChordVoice() {
-        chordVoice = GuitarVoice.otherOf(chordVoice)
-        // A chord left ringing on the old guitar while the toggle says the new
-        // one is a worse mismatch than not replaying at all, so it is always
-        // cut off first.
-        stopChord()
-        lastPlayedChordName?.let { playChord(it) }
-    }
 
     /** Set while the tapped-chord popup is up. */
     var showChordPopup by mutableStateOf(false)
@@ -383,7 +364,7 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
         playJob = viewModelScope.launch {
             // The track loops the strum, so it keeps sounding until stopChord;
             // the flag stays set for as long as the user lets it ring.
-            withContext(Dispatchers.Default) { player.play(pitches, chordVoice) }
+            withContext(Dispatchers.Default) { player.play(pitches) }
             isChordPlaying = player.isPlaying()
         }
     }

@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ugviewer.ui.theme.*
-import com.ugviewer.chord.GuitarVoice
 import com.ugviewer.util.PdfGenerator
 import com.ugviewer.viewmodel.TabViewerViewModel
 
@@ -294,9 +293,7 @@ fun TabViewerScreen(
             pages = viewModel.popupChordPages,
             isLoading = viewModel.popupChordLoading,
             isPlaying = viewModel.isChordPlaying,
-            voice = viewModel.chordVoice,
             onTogglePlayback = { viewModel.toggleChordPlayback() },
-            onToggleVoice = { viewModel.toggleChordVoice() },
             onDismiss = { viewModel.dismissChordPopup() }
         )
     }
@@ -400,8 +397,7 @@ fun PdfPreviewContent(
  *
  * The chord rings until Stop, and can be replayed from here without going back
  * to the sheet and tapping it again: a single strum is easy to miss while your
- * eyes are finding the shape on the diagram. The button beside it swaps between
- * an acoustic and an electric guitar, and re-strums on the new one.
+ * eyes are finding the shape on the diagram.
  */
 @Composable
 fun ChordDiagramPopup(
@@ -409,9 +405,7 @@ fun ChordDiagramPopup(
     pages: List<Bitmap>,
     isLoading: Boolean,
     isPlaying: Boolean = false,
-    voice: GuitarVoice = GuitarVoice.ACOUSTIC,
     onTogglePlayback: () -> Unit = {},
-    onToggleVoice: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -451,48 +445,26 @@ fun ChordDiagramPopup(
                 // the widest thing in the card, and one full-width control
                 // cannot be squeezed by it. It is the primary action here, so it
                 // takes the highlighted box and Close steps back to an outline.
-                // The guitar sits next to it because the choice belongs beside
-                // the sound it changes rather than with the diagram.
-                Row(
+                Button(
+                    onClick = onTogglePlayback,
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PdfBarContentPadding,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Highlight,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Button(
-                        onClick = onTogglePlayback,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PdfBarContentPadding,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Highlight,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isPlaying) "Stop" else "Play chord",
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = onToggleVoice,
-                        contentPadding = PdfBarContentPadding,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Accent,
-                            contentColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = voice.label,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isPlaying) "Stop" else "Play chord",
+                        fontWeight = FontWeight.Bold
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
