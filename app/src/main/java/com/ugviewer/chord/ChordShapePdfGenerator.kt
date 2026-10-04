@@ -1,7 +1,6 @@
 package com.ugviewer.chord
 
 import android.content.Context
-import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
@@ -30,7 +29,6 @@ object ChordShapePdfGenerator {
 
     private const val HEADER_FONT_SIZE = 8f
 
-    private val HEADER_FONT = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     private val NAME_FONT = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     private val PLAIN_FONT = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
 

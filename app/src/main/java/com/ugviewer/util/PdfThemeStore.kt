@@ -86,7 +86,7 @@ object PdfThemeStore {
 
     /** The name the saved layout was stored under, or null. */
     fun savedName(context: Context): String? {
-        val saved = load(context) ?: return null
+        load(context) ?: return null
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_NAME, null)
     }
@@ -95,7 +95,7 @@ object PdfThemeStore {
     fun addToNamedList(context: Context, name: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val updated = (namedList(context) - name) + name
-        prefs.edit().putString(KEY_NAMED_LIST, com.google.gson.Gson().toJson(updated)).apply()
+        prefs.edit().putString(KEY_NAMED_LIST, Gson().toJson(updated)).apply()
     }
 
     /** Saved layout names, oldest first. */
@@ -103,7 +103,7 @@ object PdfThemeStore {
         return try {
             val json = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_NAMED_LIST, null) ?: return emptyList()
-            com.google.gson.Gson().fromJson(json, Array<String>::class.java).toList()
+            Gson().fromJson(json, Array<String>::class.java).toList()
         } catch (e: Exception) {
             emptyList()
         }

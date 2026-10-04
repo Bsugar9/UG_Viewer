@@ -2,6 +2,7 @@ package com.ugviewer.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -224,8 +225,8 @@ class TabViewerViewModel(application: Application) : AndroidViewModel(applicatio
     fun openYouTube(context: Context) {
         val url = youtubeUrl ?: return
         try {
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         } catch (e: Exception) {
             errorMessage = "Could not open YouTube: ${e.message}"

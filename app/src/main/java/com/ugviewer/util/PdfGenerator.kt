@@ -253,8 +253,8 @@ object PdfGenerator {
     private val colors = PdfColors()
 
     private val chordTokenRegex = Regex("""\S+""")
-    private val chPairRegex = Regex("""\[ch\](.*?)\[/ch\]""", RegexOption.IGNORE_CASE)
-    private val anyTagRegex = Regex("""\[/?(?:ch|tab)\]""", RegexOption.IGNORE_CASE)
+    private val chPairRegex = Regex("""\[ch](.*?)\[/ch]""", RegexOption.IGNORE_CASE)
+    private val anyTagRegex = Regex("""\[/?(?:ch|tab)]""", RegexOption.IGNORE_CASE)
 
     // Chord-name recognition for plain (untagged) lines.
     private val chordQualityStartChars = "madsbM(#0123456789"
@@ -736,7 +736,7 @@ object PdfGenerator {
                     rows.add(PdfRow.Gap(theme.stanzaGap * BASE_FONT_SIZE))
                 }
                 pendingChords != null -> {
-                    addChordLyric(pendingChords!!, line.trimEnd())
+                    addChordLyric(pendingChords, line.trimEnd())
                     pendingChords = null
                 }
                 else -> addPlain(line, isTabLine = inTabBlock)
@@ -1038,7 +1038,7 @@ object PdfGenerator {
     }
 
     internal fun sanitizeFileName(name: String): String {
-        return name.replace(Regex("[<>:\"/\\|?*]"), "_").trim()
+        return name.replace(Regex("""[<>:"/|?*]"""), "_").trim()
     }
 
     /**

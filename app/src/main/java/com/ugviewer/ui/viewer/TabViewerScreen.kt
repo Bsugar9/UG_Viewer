@@ -108,7 +108,7 @@ fun TabViewerScreen(
     }
 
     var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -528,9 +528,9 @@ fun TextTabContent(
     padding: PaddingValues,
     viewModel: TabViewerViewModel,
     scale: Float,
-    offset: androidx.compose.ui.geometry.Offset,
+    offset: Offset,
     onScaleChange: (Float) -> Unit,
-    onOffsetChange: (androidx.compose.ui.geometry.Offset) -> Unit
+    onOffsetChange: (Offset) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -610,7 +610,7 @@ fun TabInfoHeader(tab: com.ugviewer.api.TabResult) {
             InfoChip(label = "Type", value = tab.type, modifier = Modifier.weight(1f))
             InfoChip(label = "Tuning", value = tab.tuning.ifEmpty { "Standard" }, modifier = Modifier.weight(1.5f))
             InfoChip(label = "Capo", value = if (tab.capo > 0) "${tab.capo}th" else "None", modifier = Modifier.weight(1f))
-            InfoChip(label = "Rating", value = "${"%.1f".format(tab.rating)}", modifier = Modifier.weight(1f))
+            InfoChip(label = "Rating", value = "%.1f".format(tab.rating), modifier = Modifier.weight(1f))
         }
     }
 }
@@ -709,7 +709,7 @@ sealed class TabSegment {
 
 fun parseTabContent(content: String): List<TabSegment> {
     val segments = mutableListOf<TabSegment>()
-    val regex = Regex("""\[ch\](.*?)\[/ch\]|\[tab\](.*?)\[/tab\]""", RegexOption.IGNORE_CASE)
+    val regex = Regex("""\[ch](.*?)\[/ch]|\[tab](.*?)\[/tab]""", RegexOption.IGNORE_CASE)
 
     var lastIndex = 0
     for (match in regex.findAll(content)) {
@@ -933,8 +933,8 @@ fun ShrinkToFitText(
     maxSp: Int,
     minSp: Int,
     color: Color,
-    fontWeight: FontWeight = FontWeight.Normal,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fontWeight: FontWeight = FontWeight.Normal
 ) {
     var fontSize by remember(text, maxSp) { mutableIntStateOf(maxSp) }
 
@@ -1015,7 +1015,7 @@ private fun Context.findActivity(): Activity? {
         if (current is Activity) return current
         current = current.baseContext
     }
-    return current as? Activity
+    return null
 }
 
 /**

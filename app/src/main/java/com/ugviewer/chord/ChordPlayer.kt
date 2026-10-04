@@ -87,7 +87,7 @@ object ChordPitch {
             // top string resolves down an octave.
             (0..5)
                 .map { pitchClass + 12 * it }
-                .minBy { kotlin.math.abs(it - reference) }
+                .minBy { abs(it - reference) }
         }
     }
 
